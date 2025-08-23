@@ -1,0 +1,12 @@
+#
+/build/
+
+# Visual Studio related
+.vs
+.vscode
+*.sln
+*vcxproj*
+
+# Makefile
+Makefile
+*.make
