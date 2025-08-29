@@ -307,11 +307,10 @@ HashsetIterator hashset_get_it(const Hashset* set) {
         .set = set,
         .bucket_index = 0,
         .item_index = 0,
-        .item = NULL,
     };
 }
 
-bool hashset_it_next(HashsetIterator* it) {
+bool hashset_it_next(HashsetIterator* it, const void* item) {
     assert(it != NULL && it->set != NULL);
 
     while (it->bucket_index < it->set->capacity) {
@@ -319,11 +318,15 @@ bool hashset_it_next(HashsetIterator* it) {
 
         if (bucket->raw != NULL && it->item_index < bucket->size) {
             HashsetEntry* entry = vector_at(bucket, it->item_index);
-            it->item = ITEM_SPECS_CAST(it->set->item_specs, hashset_entry_item(entry));
+
+            if (item != NULL) {
+                item = ITEM_SPECS_CAST(it->set->item_specs, hashset_entry_item(entry));
+            }
+
             it->item_index++;
             return true;
         }
-        // Move to the next bucket
+
         it->bucket_index++;
         it->item_index = 0;
     }

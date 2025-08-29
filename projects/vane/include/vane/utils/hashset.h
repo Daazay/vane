@@ -14,9 +14,8 @@ typedef struct Vector HashsetBucket;
 #define HASHSET_DEFAULT_CAPACITY     16
 #define HASHSET_INIT_BUCKET_SIZE     2
 #define HASHSET_CAPACITY_MULTIPLIER  4
-#define HASHSET_LOAD_FACTOR         0.75f
-#define HASHSET_MIN_LOAD_FACTOR 0.25f
-#define HASHSET_GROWTH_FACTOR 2
+#define HASHSET_LOAD_FACTOR          0.75f
+#define HASHSET_GROWTH_FACTOR        2
 
 struct Hashset {
     HashsetItemSpecs item_specs;
@@ -29,7 +28,6 @@ struct HashsetIterator {
     const Hashset* set;
     u32 bucket_index;
     u32 item_index;
-    const void* item;
 };
 
 // -- creatrion --
@@ -68,4 +66,4 @@ bool hashset_remove(Hashset* set, const void* item);
 
 HashsetIterator hashset_get_it(const Hashset* set);
 
-bool hashset_it_next(HashsetIterator* it);
+bool hashset_it_next(HashsetIterator* it, const void* item);

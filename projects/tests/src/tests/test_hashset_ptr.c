@@ -77,7 +77,7 @@ UTEST_F(TestHashsetPtr, hashset_contains1) {
 UTEST_F(TestHashsetPtr, hashset_it_next1) {
     HashsetIterator it = hashset_get_it(&SET);
 
-    ASSERT_FALSE(hashset_it_next(&it));
+    ASSERT_FALSE(hashset_it_next(&it, NULL));
 }
 
 UTEST_F(TestHashsetPtr, hashset_it_next2) {
@@ -97,7 +97,7 @@ UTEST_F(TestHashsetPtr, hashset_it_next2) {
 
     HashsetIterator it = hashset_get_it(&SET);
     for (u32 i = 0; i < items_count; ++i) {
-        ASSERT_TRUE(hashset_it_next(&it));
+        ASSERT_TRUE(hashset_it_next(&it, NULL));
     }
-    ASSERT_FALSE(hashset_it_next(&it));
+    ASSERT_FALSE(hashset_it_next(&it, NULL));
 }
