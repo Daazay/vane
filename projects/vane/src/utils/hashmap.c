@@ -27,12 +27,12 @@ static inline void* hashmap_entry_value(const Hashmap* map, const HashmapEntry* 
 static inline void hashmap_entry_destroy(const Hashmap* map, HashmapEntry* entry) {
     if (map->key_specs.destroy_fn != NULL) {
         void* key = hashmap_entry_key(map, entry);
-        void* actual_key = ITEM_SPECS_CAST(map->key_specs, key);
+        void* actual_key = ITEM_SPEC_CAST(map->key_specs.is_ptr, key);
         map->key_specs.destroy_fn(actual_key);
     }
     if (map->value_specs.destroy_fn != NULL) {
         void* value = hashmap_entry_value(map, entry);
-        void* actual_value = ITEM_SPECS_CAST(map->value_specs, value);
+        void* actual_value = ITEM_SPEC_CAST(map->value_specs.is_ptr, value);
         map->value_specs.destroy_fn(actual_value);
     }
 }
@@ -43,13 +43,13 @@ static inline void hashmap_bucket_init(const Hashmap* map, HashmapBucket* bucket
 
     *bucket = vector_create(HASHMAP_INIT_BUCKET_SIZE, (VectorItemSpecs) {
         .size = (u32)(is_entry_big ? sizeof(HashmapEntry*) : entry_size),
-        .is_ptr = is_entry_big,
-        .destroy_fn = is_entry_big ? &free : NULL,
+            .is_ptr = is_entry_big,
+            .destroy_fn = is_entry_big ? &free : NULL,
     });
 }
 
 static inline HashmapEntry* hashmap_find_entry(const Hashmap* map, const void* key) {
-    const void* actual_key = ITEM_SPECS_CAST(map->key_specs, key);
+    const void* actual_key = ITEM_SPEC_CAST(map->key_specs.is_ptr, key);
     const u32 computed_hash = map->key_specs.hash_fn(actual_key);
     const u32 bucket_idx = computed_hash % map->capacity;
 
@@ -59,11 +59,11 @@ static inline HashmapEntry* hashmap_find_entry(const Hashmap* map, const void* k
     }
 
     for (u32 i = 0; i < bucket->size; i++) {
-        HashmapEntry* entry = vector_at(bucket, i);
+        HashmapEntry* entry = vector_at(*bucket, i);
 
         if (computed_hash == entry->hash) {
             void* entry_key = hashmap_entry_key(map, entry);
-            void* actual_entry_key = ITEM_SPECS_CAST(map->key_specs, entry_key);
+            void* actual_entry_key = ITEM_SPEC_CAST(map->key_specs.is_ptr, entry_key);
             if (map->key_specs.equals_fn(actual_key, actual_entry_key)) {
                 return entry;
             }
@@ -88,10 +88,10 @@ Hashmap hashmap_create(u32 init_cap, HashmapKeySpecs key_specs, HashmapValueSpec
 
     return (Hashmap) {
         .key_specs = key_specs,
-        .value_specs = value_specs,
-        .buckets = buckets,
-        .capacity = cap,
-        .size = 0,
+            .value_specs = value_specs,
+            .buckets = buckets,
+            .capacity = cap,
+            .size = 0,
     };
 }
 
@@ -121,7 +121,7 @@ void hashmap_clear(Hashmap* map) {
         }
 
         for (u32 j = 0; j < bucket->size; j++) {
-            HashmapEntry* entry = vector_at(bucket, j);
+            HashmapEntry* entry = vector_at(*bucket, j);
             hashmap_entry_destroy(map, entry);
         }
         vector_destroy(bucket);
@@ -154,7 +154,7 @@ void hashmap_rehash(Hashmap* map, u32 new_cap) {
         }
 
         for (u32 j = 0; j < old_bucket->size; j++) {
-            HashmapEntry* entry = vector_at(old_bucket, j);
+            HashmapEntry* entry = vector_at(*old_bucket, j);
 
             const u32 new_bucket_idx = entry->hash % new_cap;
             HashmapBucket* new_bucket = &new_buckets[new_bucket_idx];
@@ -197,14 +197,14 @@ void hashmap_shrink_to_fit(Hashmap* map) {
 
 void hashmap_insert(Hashmap* map, const void* key, const void* value) {
     assert(map != NULL);
-    assert(map->key_specs.is_ptr || key != NULL && "key can be NULL only if item type is ptr");
-    assert(map->value_specs.is_ptr || value != NULL && "value can be NULL only if item type is ptr");
+    assert(map->key_specs.is_ptr || (key != NULL && "key can be NULL only if item type is ptr"));
+    assert(map->value_specs.is_ptr || (value != NULL && "value can be NULL only if item type is ptr"));
 
     HashmapEntry* existing_entry = hashmap_find_entry(map, key);
     if (existing_entry != NULL) {
         // Update existing entry
         void* entry_value = hashmap_entry_value(map, existing_entry);
-        void* actual_entry_value = ITEM_SPECS_CAST(map->value_specs, entry_value);
+        void* actual_entry_value = ITEM_SPEC_CAST(map->value_specs.is_ptr, entry_value);
 
         if (map->value_specs.destroy_fn != NULL) {
             map->value_specs.destroy_fn(actual_entry_value);
@@ -222,7 +222,7 @@ void hashmap_insert(Hashmap* map, const void* key, const void* value) {
         hashmap_rehash(map, map->capacity * HASHMAP_GROWTH_FACTOR);
     }
 
-    const void* actual_key = ITEM_SPECS_CAST(map->key_specs, key);
+    const void* actual_key = ITEM_SPEC_CAST(map->key_specs.is_ptr, key);
     const u32 computed_hash = map->key_specs.hash_fn(actual_key);
     const u32 bucket_idx = computed_hash % map->capacity;
 
@@ -289,37 +289,37 @@ void hashmap_insert(Hashmap* map, const void* key, const void* value) {
 
 bool hashmap_contains(const Hashmap* map, const void* key) {
     assert(map != NULL);
-    assert(map->key_specs.is_ptr || key != NULL && "key can be NULL only if item type is ptr");
+    assert(map->key_specs.is_ptr || (key != NULL && "key can be NULL only if item type is ptr"));
     return hashmap_find_entry(map, key) != NULL;
 }
 
 void* hashmap_get(const Hashmap* map, const void* key) {
     assert(map != NULL);
-    assert(map->key_specs.is_ptr || key != NULL && "key can be NULL only if item type is ptr");
+    assert(map->key_specs.is_ptr || (key != NULL && "key can be NULL only if item type is ptr"));
 
     HashmapEntry* entry = hashmap_find_entry(map, key);
     return (entry == NULL)
         ? NULL
-        : ITEM_SPECS_CAST(map->value_specs, hashmap_entry_value(map, entry));
+        : ITEM_SPEC_CAST(map->value_specs.is_ptr, hashmap_entry_value(map, entry));
 }
 
 const void* hashmap_get_key(const Hashmap* map, const void* key) {
     assert(map != NULL);
-    assert(map->key_specs.is_ptr || key != NULL && "key can be NULL only if item type is ptr");
+    assert(map->key_specs.is_ptr || (key != NULL && "key can be NULL only if item type is ptr"));
 
     HashmapEntry* entry = hashmap_find_entry(map, key);
     return (entry == NULL)
         ? NULL
-        : ITEM_SPECS_CAST(map->key_specs, hashmap_entry_key(map, entry));
+        : ITEM_SPEC_CAST(map->key_specs.is_ptr, hashmap_entry_key(map, entry));
 }
 
 // -- removal --
 
 bool hashmap_remove(Hashmap* map, const void* key) {
     assert(map != NULL);
-    assert(map->key_specs.is_ptr || key != NULL && "key can be NULL only if item type is ptr");
+    assert(map->key_specs.is_ptr || (key != NULL && "key can be NULL only if item type is ptr"));
 
-    const void* actual_key = ITEM_SPECS_CAST(map->key_specs, key);
+    const void* actual_key = ITEM_SPEC_CAST(map->key_specs.is_ptr, key);
     const u32 computed_hash = map->key_specs.hash_fn(actual_key);
     const u32 bucket_idx = computed_hash % map->capacity;
 
@@ -329,13 +329,13 @@ bool hashmap_remove(Hashmap* map, const void* key) {
     }
 
     for (u32 i = 0; i < bucket->size; i++) {
-        HashmapEntry* entry = vector_at(bucket, i);
+        HashmapEntry* entry = vector_at(*bucket, i);
         if (computed_hash != entry->hash) {
             continue;
         }
 
         void* entry_key = hashmap_entry_key(map, entry);
-        void* actual_entry_key = ITEM_SPECS_CAST(map->key_specs, entry_key);
+        void* actual_entry_key = ITEM_SPEC_CAST(map->key_specs.is_ptr, entry_key);
 
         if (map->key_specs.equals_fn(actual_key, actual_entry_key)) {
             hashmap_entry_destroy(map, entry);
@@ -354,8 +354,8 @@ HashmapIterator hashmap_get_it(const Hashmap* map) {
     assert(map != NULL);
     return (HashmapIterator) {
         .map = map,
-        .bucket_index = 0,
-        .item_index = 0,
+            .bucket_index = 0,
+            .item_index = 0,
     };
 }
 
@@ -366,13 +366,13 @@ bool hashmap_it_next(HashmapIterator* it, const void* key, void* value) {
         HashmapBucket* bucket = &it->map->buckets[it->bucket_index];
 
         if (bucket->raw != NULL && it->item_index < bucket->size) {
-            HashmapEntry* entry = vector_at(bucket, it->item_index);
+            HashmapEntry* entry = vector_at(*bucket, it->item_index);
 
             if (key != NULL) {
-                key = ITEM_SPECS_CAST(it->map->key_specs, hashmap_entry_key(it->map, entry));
+                key = ITEM_SPEC_CAST(it->map->key_specs.is_ptr, hashmap_entry_key(it->map, entry));
             }
             if (value != NULL) {
-                value = ITEM_SPECS_CAST(it->map->value_specs, hashmap_entry_value(it->map, entry));
+                value = ITEM_SPEC_CAST(it->map->value_specs.is_ptr, hashmap_entry_value(it->map, entry));
             }
 
             it->item_index++;

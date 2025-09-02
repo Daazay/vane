@@ -12,7 +12,11 @@ Vector vector_create(u32 init_cap, VectorItemSpecs item_specs) {
         ? init_cap
         : VECTOR_DEFAULT_CAPACITY;
 
-    byte* raw = malloc((u64)cap * item_specs.size);
+    if (cap < 2) {
+        cap = 2;
+    }
+
+    u8* raw = malloc((u64)cap * item_specs.size);
     assert(raw != NULL);
 
     return (Vector) {
@@ -30,7 +34,7 @@ void vector_clear(Vector* vec) {
 
     if (vec->item_specs.destroy_fn != NULL) {
         for (u32 i = 0; i < vec->size; ++i) {
-            void* item = vector_at(vec, i);
+            void* item = vector_at(*vec, i);
             vec->item_specs.destroy_fn(item);
         }
     }
@@ -45,31 +49,29 @@ void vector_destroy(Vector* vec) {
 
     if (vec->raw != NULL) {
         vector_clear(vec);
-
         free(vec->raw);
         vec->raw = NULL;
     }
 
-    vec->cap = 0;
     vec->size = 0;
+    vec->cap = 0;
 }
 
 // -- utilities --
 
-bool is_vector_empty(const Vector* vec) {
-    assert(vec != NULL);
-    return vec->raw == NULL || vec->size == 0;
+bool is_vector_empty(Vector vec) {
+    return vec.raw == NULL || vec.size == 0;
 }
 
-// -- insertion --
+void vector_reserve(Vector* vec, u32 additional_size) {
+    assert(vec != NULL);
 
-static inline void vector_ensure_capacity(Vector* vec, u32 appended_size) {
-    const u64 required = vec->size + appended_size;
+    const u64 required = vec->size + additional_size;
     if (required <= vec->cap) {
         return;
     }
 
-    u32 new_cap = (vec->size > 0)
+    u32 new_cap = (vec->cap > 0)
         ? vec->cap
         : VECTOR_DEFAULT_CAPACITY;
 
@@ -80,16 +82,49 @@ static inline void vector_ensure_capacity(Vector* vec, u32 appended_size) {
     while (new_cap < required) {
         const u32 next_cap = (u32)((f32)new_cap * VECTOR_CAPACITY_MULT);
         assert(next_cap > new_cap && "Capacity growth overflow");
-
         new_cap = next_cap;
     }
 
-    u8* new_raw = realloc(vec->raw, (u64)new_cap * vec->item_specs.size);
-    assert(new_raw != NULL);
+    u8* raw = realloc(vec->raw, (u64)new_cap * vec->item_specs.size);
+    assert(raw != NULL);
 
-    vec->raw = new_raw;
-    vec->cap = new_cap;
+    vec->raw = raw;
+    vec->cap = (u32)new_cap;
 }
+
+void vector_resize(Vector* vec, u32 new_size) {
+    assert(vec != NULL);
+
+    if (new_size < vec->size) {
+        if (vec->item_specs.destroy_fn != NULL) {
+            for (u32 i = new_size; i < vec->size; i++) {
+                void* item = vector_at(*vec, i);
+                vec->item_specs.destroy_fn(item);
+            }
+        }
+        vec->size = new_size;
+        vector_shrink_to_fit(vec);
+    }
+    else if (new_size > vec->size) {
+        vector_reserve(vec, new_size - vec->size);
+    }
+}
+
+void vector_shrink_to_fit(Vector* vec) {
+    assert(vec != NULL);
+
+    if (vec->raw == NULL || vec->size == 0 || vec->size == vec->cap) {
+        return;
+    }
+
+    u8* raw = realloc(vec->raw, vec->size * vec->item_specs.size);
+    assert(raw != NULL);
+
+    vec->raw = raw;
+    vec->cap = vec->size;
+}
+
+// -- insertion --
 
 void vector_insert(Vector* vec, u32 idx, const void* items, u32 count) {
     assert(vec != NULL);
@@ -99,9 +134,9 @@ void vector_insert(Vector* vec, u32 idx, const void* items, u32 count) {
     }
 
     assert((items != NULL || vec->item_specs.is_ptr) && "Items can be NULL only if item type is ptr");
-    vector_ensure_capacity(vec, count);
+    vector_reserve(vec, count);
 
-    byte* insert_pos = vec->raw + idx * vec->item_specs.size;
+    u8* insert_pos = vec->raw + idx * vec->item_specs.size;
 
     if (idx < vec->size) {
         u64 move_bytes = (u64)(vec->size - idx) * vec->item_specs.size;
@@ -118,34 +153,19 @@ void vector_insert(Vector* vec, u32 idx, const void* items, u32 count) {
     vec->size += count;
 }
 
-void vector_push_front(Vector* vec, const void* item) {
-    assert(vec != NULL);
-    vector_insert(vec, 0, item, 1);
-}
-
-void vector_push_back(Vector* vec, const void* item) {
-    assert(vec != NULL);
-    vector_insert(vec, vec->size, item, 1);
-}
-
-void vector_extend(Vector* vec, const void* items, u32 count) {
-    assert(vec != NULL);
-    vector_insert(vec, vec->size, items, count);
-}
-
 // -- removal --
 
 void vector_remove(Vector* vec, u32 idx) {
     assert(vec != NULL && idx < vec->size);
 
-    byte* item = vec->raw + idx * vec->item_specs.size;
+    u8* item = vec->raw + idx * vec->item_specs.size;
 
     if (vec->item_specs.destroy_fn != NULL) {
-        vec->item_specs.destroy_fn(ITEM_SPECS_CAST(vec->item_specs, item));
+        vec->item_specs.destroy_fn(ITEM_SPEC_CAST(vec->item_specs.is_ptr, item));
     }
 
     if (idx < vec->size - 1) {
-        byte* next_item = item + vec->item_specs.size;
+        u8* next_item = item + vec->item_specs.size;
         u64 bytes_to_move = (u64)(vec->size - idx - 1) * vec->item_specs.size;
         memmove(item, next_item, bytes_to_move);
     }
@@ -153,51 +173,37 @@ void vector_remove(Vector* vec, u32 idx) {
     vec->size--;
 }
 
-void vector_pop_front(Vector* vec) {
-    assert(vec != NULL && vec->size > 0);
-    vector_remove(vec, 0);
+// -- access --
+
+void* vector_at(Vector vec, u32 idx) {
+    assert(idx < vec.size);
+    void* item = vec.raw + (u64)idx * vec.item_specs.size;
+    return ITEM_SPEC_CAST(vec.item_specs.is_ptr, item);
 }
 
-void vector_pop_back(Vector* vec) {
-    assert(vec != NULL && vec->size > 0);
-    vector_remove(vec, vec->size - 1);
+void vector_get(Vector vec, u32 idx, void* _item) {
+    assert(idx < vec.size && _item != NULL);
+
+    void* item = vec.raw + (u64)idx * vec.item_specs.size;
+    memcpy(_item, item, vec.item_specs.size);
 }
 
-// -- Access --
+// -- modification --
 
-void* vector_at(const Vector* vec, u32 idx) {
-    assert(vec != NULL && idx < vec->size);
+void vector_set(Vector vec, u32 idx, const void* item) {
+    assert(idx < vec.size);
+    assert((item != NULL || vec.item_specs.is_ptr) && "item can be NULL only if item type is ptr");
 
-    void* item = vec->raw + (u64)idx * vec->item_specs.size;
-    return ITEM_SPECS_CAST(vec->item_specs, item);
-}
+    void* dst = vec.raw + idx * vec.item_specs.size;
 
-void* vector_at_front(const Vector* vec) {
-    assert(vec != NULL && vec->size > 0);
-    return vector_at(vec, 0);
-}
-
-void* vector_at_back(const Vector* vec) {
-    assert(vec != NULL && vec->size > 0);
-    return vector_at(vec, vec->size - 1);
-}
-
-// -- Modification --
-
-void vector_set(Vector* vec, u32 idx, const void* item) {
-    assert(vec != NULL && idx < vec->size);
-    assert((item != NULL || vec->item_specs.is_ptr) && "item can be NULL only if item type is ptr");
-
-    void* dst = vec->raw + idx * vec->item_specs.size;
-
-    if (vec->item_specs.destroy_fn != NULL) {
-        vec->item_specs.destroy_fn(ITEM_SPECS_CAST(vec->item_specs, dst));
+    if (vec.item_specs.destroy_fn != NULL) {
+        vec.item_specs.destroy_fn(ITEM_SPEC_CAST(vec.item_specs.is_ptr, dst));
     }
 
     if (item != NULL) {
-        memcpy(dst, item, vec->item_specs.size);
+        memcpy(dst, item, vec.item_specs.size);
     }
     else {
-        memset(dst, 0, vec->item_specs.size);
+        memset(dst, 0, vec.item_specs.size);
     }
 }

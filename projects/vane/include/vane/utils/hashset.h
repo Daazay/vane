@@ -3,6 +3,7 @@
 #include "vane/utils/defines.h"
 #include "vane/utils/collection_common.h"
 
+
 typedef struct Hashset Hashset;
 typedef struct HashsetIterator HashsetIterator;
 typedef struct HashItemSpecs HashsetItemSpecs;

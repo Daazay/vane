@@ -2,7 +2,7 @@
 
 #include <vane/utils/hashmap.h>
 
-#include "test_object.h"
+#include "../utils/test_object.h"
 
 typedef struct HashmapPtrPair HashmapPtrPair;
 

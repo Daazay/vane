@@ -22,7 +22,7 @@ static inline void* hashset_entry_item(const HashsetEntry* entry) {
 static inline void hashset_entry_destroy(const Hashset* set, HashsetEntry* entry) {
     if (set->item_specs.destroy_fn != NULL) {
         void* item = hashset_entry_item(entry);
-        void* actual_item = ITEM_SPECS_CAST(set->item_specs, item);
+        void* actual_item = ITEM_SPEC_CAST(set->item_specs.is_ptr, item);
         set->item_specs.destroy_fn(actual_item);
     }
 }
@@ -39,7 +39,7 @@ static inline void hashset_bucket_init(const Hashset* set, HashsetBucket* bucket
 }
 
 static inline HashsetEntry* hashset_find_entry(const Hashset* set, const void* item) {
-    const void* actual_item = ITEM_SPECS_CAST(set->item_specs, item);
+    const void* actual_item = ITEM_SPEC_CAST(set->item_specs.is_ptr, item);
     const u32 computed_hash = set->item_specs.hash_fn(actual_item);
     const u32 bucket_idx = computed_hash % set->capacity;
 
@@ -50,11 +50,11 @@ static inline HashsetEntry* hashset_find_entry(const Hashset* set, const void* i
     }
 
     for (u32 i = 0; i < bucket->size; i++) {
-        HashsetEntry* entry = vector_at(bucket, i);
+        HashsetEntry* entry = vector_at(*bucket, i);
 
         if (computed_hash == entry->hash) {
             void* entry_item = hashset_entry_item(entry);
-            void* actual_entry_item = ITEM_SPECS_CAST(set->item_specs, entry_item);
+            void* actual_entry_item = ITEM_SPEC_CAST(set->item_specs.is_ptr, entry_item);
             if (set->item_specs.equals_fn(actual_item, actual_entry_item)) {
                 return entry;
             }
@@ -110,7 +110,7 @@ void hashset_clear(Hashset* set) {
         }
 
         for (u32 j = 0; j < bucket->size; j++) {
-            HashsetEntry* entry = vector_at(bucket, j);
+            HashsetEntry* entry = vector_at(*bucket, j);
             hashset_entry_destroy(set, entry);
         }
         vector_destroy(bucket);
@@ -143,7 +143,7 @@ void hashset_rehash(Hashset* set, u32 new_cap) {
         }
 
         for (u32 j = 0; j < old_bucket->size; j++) {
-            HashsetEntry* entry = vector_at(old_bucket, j);
+            HashsetEntry* entry = vector_at(*old_bucket, j);
 
             const u32 new_bucket_idx = entry->hash % new_cap;
             HashsetBucket* new_bucket = &new_buckets[new_bucket_idx];
@@ -186,7 +186,7 @@ void hashset_shrink_to_fit(Hashset* set) {
 
 void hashset_insert(Hashset* set, const void* item) {
     assert(set != NULL);
-    assert(set->item_specs.is_ptr || item != NULL && "item can be NULL only if item type is ptr");
+    assert(set->item_specs.is_ptr || (item != NULL && "item can be NULL only if item type is ptr"));
 
     HashsetEntry* existing_entry = hashset_find_entry(set, item);
     if (existing_entry != NULL) {
@@ -198,7 +198,7 @@ void hashset_insert(Hashset* set, const void* item) {
         hashset_rehash(set, set->capacity * HASHSET_GROWTH_FACTOR);
     }
 
-    const void* actual_item = ITEM_SPECS_CAST(set->item_specs, item);
+    const void* actual_item = ITEM_SPEC_CAST(set->item_specs.is_ptr, item);
     const u32 computed_hash = set->item_specs.hash_fn(actual_item);
     const u32 bucket_idx = computed_hash % set->capacity;
 
@@ -249,27 +249,27 @@ void hashset_insert(Hashset* set, const void* item) {
 
 bool hashset_contains(const Hashset* set, const void* item) {
     assert(set != NULL);
-    assert(set->item_specs.is_ptr || item != NULL && "item can be NULL only if item type is ptr");
+    assert(set->item_specs.is_ptr || (item != NULL && "item can be NULL only if item type is ptr"));
     return hashset_find_entry(set, item) != NULL;
 }
 
-const void* hashset_get(const Hashset* set, const void* item) {
+const void* hashset_at(const Hashset* set, const void* item) {
     assert(set != NULL);
-    assert(set->item_specs.is_ptr || item != NULL && "item can be NULL only if item type is ptr");
+    assert(set->item_specs.is_ptr || (item != NULL && "item can be NULL only if item type is ptr"));
 
     HashsetEntry* entry = hashset_find_entry(set, item);
     return (entry == NULL)
         ? NULL
-        : ITEM_SPECS_CAST(set->item_specs, hashset_entry_item(entry));
+        : ITEM_SPEC_CAST(set->item_specs.is_ptr, hashset_entry_item(entry));
 }
 
 // -- removal --
 
 bool hashset_remove(Hashset* set, const void* item) {
     assert(set != NULL);
-    assert(set->item_specs.is_ptr || item != NULL && "item can be NULL only if item type is ptr");
+    assert(set->item_specs.is_ptr || (item != NULL && "item can be NULL only if item type is ptr"));
 
-    const void* actual_item = ITEM_SPECS_CAST(set->item_specs, item);
+    const void* actual_item = ITEM_SPEC_CAST(set->item_specs.is_ptr, item);
     const u32 computed_hash = set->item_specs.hash_fn(actual_item);
     const u32 bucket_idx = computed_hash % set->capacity;
 
@@ -279,14 +279,14 @@ bool hashset_remove(Hashset* set, const void* item) {
     }
 
     for (u32 i = 0; i < bucket->size; i++) {
-        HashsetEntry* entry = vector_at(bucket, i);
+        HashsetEntry* entry = vector_at(*bucket, i);
 
         if (computed_hash != entry->hash) {
             continue;
         }
 
         const void* entry_item = hashset_entry_item(entry);
-        const void* actual_entry_item = ITEM_SPECS_CAST(set->item_specs, entry_item);
+        const void* actual_entry_item = ITEM_SPEC_CAST(set->item_specs.is_ptr, entry_item);
 
         if (set->item_specs.equals_fn(actual_item, actual_entry_item)) {
             hashset_entry_destroy(set, entry);
@@ -317,10 +317,10 @@ bool hashset_it_next(HashsetIterator* it, const void* item) {
         const HashsetBucket* bucket = &it->set->buckets[it->bucket_index];
 
         if (bucket->raw != NULL && it->item_index < bucket->size) {
-            HashsetEntry* entry = vector_at(bucket, it->item_index);
+            HashsetEntry* entry = vector_at(*bucket, it->item_index);
 
             if (item != NULL) {
-                item = ITEM_SPECS_CAST(it->set->item_specs, hashset_entry_item(entry));
+                item = ITEM_SPEC_CAST(it->set->item_specs.is_ptr, hashset_entry_item(entry));
             }
 
             it->item_index++;

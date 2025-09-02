@@ -2,7 +2,7 @@
 
 #include <vane/utils/hashset.h>
 
-#include "test_object.h"
+#include "../utils/test_object.h"
 
 struct TestHashsetStruct {
     Hashset set;
