@@ -178,6 +178,24 @@ static inline Rune string_rune_at(String s, u64 idx, u64* byte_idx, u32* read_le
     return string_view_rune_at(string_get_view(s), idx, byte_idx, read_len);
 }
 
+// -- utilities --
+
+static inline u32 string_get_hash(String s) {
+    return string_view_get_hash(string_get_view(s));
+}
+
+// -- collection utilities --
+
+static inline bool __string_eq_str(const String* s1, const String* s2) {
+    assert(s1 != NULL && s2 != NULL);
+    return string_eq_str(*s1, *s2);
+}
+
+static inline u32 __string_get_hash(const String* s) {
+    assert(s != NULL);
+    return string_get_hash(*s);
+}
+
 // -- search --
 
 static inline bool string_contains_c(String s, char c) {

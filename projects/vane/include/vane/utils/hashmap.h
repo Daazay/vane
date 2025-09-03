@@ -71,4 +71,4 @@ bool hashmap_remove(Hashmap* map, const void* key);
 
 HashmapIterator hashmap_get_it(const Hashmap* map);
 
-bool hashmap_it_next(HashmapIterator* it, const void* key, void* value);
+bool hashmap_it_next(HashmapIterator* it, void* key, void* value);

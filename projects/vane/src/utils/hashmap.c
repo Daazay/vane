@@ -359,7 +359,7 @@ HashmapIterator hashmap_get_it(const Hashmap* map) {
     };
 }
 
-bool hashmap_it_next(HashmapIterator* it, const void* key, void* value) {
+bool hashmap_it_next(HashmapIterator* it, void* key, void* value) {
     assert(it != NULL && it->map != NULL);
 
     while (it->bucket_index < it->map->capacity) {
@@ -369,10 +369,10 @@ bool hashmap_it_next(HashmapIterator* it, const void* key, void* value) {
             HashmapEntry* entry = vector_at(*bucket, it->item_index);
 
             if (key != NULL) {
-                key = ITEM_SPEC_CAST(it->map->key_specs.is_ptr, hashmap_entry_key(it->map, entry));
+                memcpy(key, hashmap_entry_key(it->map, entry), it->map->key_specs.size);
             }
             if (value != NULL) {
-                value = ITEM_SPEC_CAST(it->map->value_specs.is_ptr, hashmap_entry_value(it->map, entry));
+                memcpy(value, hashmap_entry_value(it->map, entry), it->map->value_specs.size);
             }
 
             it->item_index++;
