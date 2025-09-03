@@ -8,3 +8,5 @@ project "vane"
     }
 
     includedirs { "include" }
+
+    defines { "_FILE_OFFSET_BITS=64" }
