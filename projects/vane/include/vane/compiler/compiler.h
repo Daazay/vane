@@ -9,7 +9,7 @@
 
 typedef struct Compiler Compiler;
 
-#define VANE_LANG_EXT                           ".c"
+#define VANE_LANG_EXT                           ".vn"
 #define COMPILER_DEFAULT_PACKAGES_COUNT         8
 #define COMPILER_DEFAULT_COLLECTION_PATHS_COUNT 2
 
