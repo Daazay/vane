@@ -41,3 +41,16 @@ static inline bool is_vspace(char c) {
 static inline bool is_space(char c) {
     return is_hspace(c) || is_vspace(c);
 }
+
+static inline bool is_punc(char c) {
+    return (c == '(') || (c == ')') ||
+           (c == '[') || (c == ']') ||
+           (c == '.') || (c == ',') ||
+           (c == ':') || (c == ';') ||
+           (c == '+') || (c == '-') ||
+           (c == '*') || (c == '/') ||
+           (c == '%') || (c == '^') ||
+           (c == '&') || (c == '|') ||
+           (c == '=') || (c == '~') || (c == '!') ||
+           (c == '>') || (c == '<');
+}

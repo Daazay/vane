@@ -1,0 +1,118 @@
+/*..............................START OF DEFINES..............................*/
+
+#ifndef TOKEN
+#define TOKEN(KIND, NAME, VALUE)
+#endif
+
+/*..............................MISC..........................................*/
+
+#ifndef TOKEN_MISC
+#define TOKEN_MISC(KIND, NAME) TOKEN(KIND, NAME, NAME)
+#endif
+
+TOKEN_MISC(UNKNOWN,    "unknown")
+TOKEN_MISC(INVALID,    "invalid")
+TOKEN_MISC(IDENTIFIER, "identifier")
+TOKEN_MISC(EOF_,       "eof")
+
+/*..............................PUNC..........................................*/
+
+#ifndef TOKEN_PUNC
+#define TOKEN_PUNC(KIND, NAME, VALUE) TOKEN(KIND, NAME, VALUE)
+#endif
+
+TOKEN_PUNC(L_BRACE,               "l_brace",               "(")
+TOKEN_PUNC(R_BRACE,               "r_brace",               ")")
+TOKEN_PUNC(L_BRACKET,             "l_bracket",             "[")
+TOKEN_PUNC(R_BRACKET,             "r_bracket",             "]")
+TOKEN_PUNC(L_CURLY,               "l_curly",               "{")
+TOKEN_PUNC(R_CURLY,               "r_curly",               "}")
+TOKEN_PUNC(DOT,                   "dot",                   ".")
+TOKEN_PUNC(COMMA,                 "comma",                 ",")
+TOKEN_PUNC(COLON,                 "colon",                 ":")
+TOKEN_PUNC(SEMICOLON,             "semicolon",             ";")
+
+TOKEN_PUNC(PLUS,                  "plus",                  "+")
+TOKEN_PUNC(PLUS_EQUAL,            "plus_equal",            "+=")
+TOKEN_PUNC(PLUS_PLUS,             "plus_plus",             "++")
+TOKEN_PUNC(MINUS,                 "minus",                 "-")
+TOKEN_PUNC(MINUS_GREATER,         "minus_greater",         "->")
+TOKEN_PUNC(MINUS_EQUAL,           "minus_equal",           "-=")
+TOKEN_PUNC(MINUS_MINUS,           "minus_minus",           "--")
+TOKEN_PUNC(STAR,                  "star",                  "*")
+TOKEN_PUNC(STAR_EQUAL,            "star_equal",            "*=")
+TOKEN_PUNC(SLASH,                 "slash",                 "/")
+TOKEN_PUNC(SLASH_EQUAL,           "slash_equal",           "/=")
+TOKEN_PUNC(PERCENT,               "percent",               "%")
+TOKEN_PUNC(PERCENT_EQUAL,         "percent_equal",         "%=")
+TOKEN_PUNC(CARET,                 "caret",                 "^")
+TOKEN_PUNC(AMP,                   "amp",                   "&")
+TOKEN_PUNC(AMP_AMP,               "amp_amp",               "&&")
+TOKEN_PUNC(AMP_EQUAL,             "amp_equal",             "&=")
+TOKEN_PUNC(PIPE,                  "pipe",                  "|")
+TOKEN_PUNC(PIPE_PIPE,             "pipe_pipe",             "||")
+TOKEN_PUNC(PIPE_EQUAL,            "pipe_equal",            "|=")
+TOKEN_PUNC(EQUAL,                 "equal",                 "=")
+TOKEN_PUNC(EQUAL_EQUAL,           "equal_equal",           "==")
+TOKEN_PUNC(TILDE,                 "tilde",                 "~")
+TOKEN_PUNC(EXCLAIM,               "exclaim",               "!")
+TOKEN_PUNC(EXCLAIM_EQUAL,         "exclaim_equal",         "!=")
+TOKEN_PUNC(GREATER,               "greater",               ">")
+TOKEN_PUNC(GREATER_EQUAL,         "greater_equal",         ">=")
+TOKEN_PUNC(GREATER_GREATER,       "greater_greater",       ">>")
+TOKEN_PUNC(GREATER_GREATER_EQUAL, "greater_greater_equal", ">>=")
+TOKEN_PUNC(LESS,                  "less",                  "<")
+TOKEN_PUNC(LESS_EQUAL,            "less_equal",            "<=")
+TOKEN_PUNC(LESS_LESS,             "less_less",             "<<")
+TOKEN_PUNC(LESS_LESS_EQUAL,       "less_less_equal",       "<<=")
+
+/*..............................KEYWORD.......................................*/
+
+#ifndef TOKEN_KEYWORD
+#define TOKEN_KEYWORD(KIND, NAME) TOKEN(KEYWORD_##KIND, NAME, NAME)
+#endif
+
+TOKEN_KEYWORD(IMPORT,   "import")
+TOKEN_KEYWORD(PRIVATE,  "private")
+TOKEN_KEYWORD(PUBLIC,   "public")
+TOKEN_KEYWORD(CLASS,    "class")
+TOKEN_KEYWORD(AS,       "as")
+TOKEN_KEYWORD(TYPE,     "type")
+TOKEN_KEYWORD(FUN,      "fun")
+TOKEN_KEYWORD(BEGIN,    "begin")
+TOKEN_KEYWORD(END,      "end")
+TOKEN_KEYWORD(CONST,    "const")
+TOKEN_KEYWORD(VAR,      "var")
+TOKEN_KEYWORD(IF,       "if")
+TOKEN_KEYWORD(THEN,     "then")
+TOKEN_KEYWORD(ELSE,     "else")
+TOKEN_KEYWORD(WHILE,    "while")
+TOKEN_KEYWORD(DO,       "do")
+TOKEN_KEYWORD(LOOP,     "loop")
+TOKEN_KEYWORD(UNTIL,    "until")
+TOKEN_KEYWORD(BREAK,    "break")
+TOKEN_KEYWORD(CONTINUE, "continue")
+TOKEN_KEYWORD(RETURN,   "return")
+TOKEN_KEYWORD(DEFER,    "defer")
+
+/*..............................LITERAL.......................................*/
+
+#ifndef TOKEN_LITERAL
+#define TOKEN_LITERAL(KIND, NAME) TOKEN(LITERAL_##KIND, NAME, NAME)
+#endif
+
+TOKEN_LITERAL(STRING, "string")
+TOKEN_LITERAL(CHAR,   "char")
+TOKEN_LITERAL(DEC,    "dec")
+TOKEN_LITERAL(OCT,    "oct")
+TOKEN_LITERAL(HEX,    "hex")
+TOKEN_LITERAL(BIN,    "bin")
+TOKEN_LITERAL(BOOL,   "bool")
+
+/*..............................END OF DEFINES................................*/
+
+#undef TOKEN_LITERAL
+#undef TOKEN_KEYWORD
+#undef TOKEN_PUNC
+#undef TOKEN_MISC
+#undef TOKEN

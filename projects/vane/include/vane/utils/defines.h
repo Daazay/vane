@@ -57,3 +57,19 @@ typedef u8                 byte;
 #ifndef ARR_SIZE
 #define ARR_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 #endif
+
+#ifndef SET_FLAG
+#define SET_FLAG(FLAGS, FLAG) ((void)((FLAGS) |= (FLAG)))
+#endif
+
+#ifndef CLEAR_FLAG
+#define CLEAR_FLAG(FLAGS, FLAG) ((void)((FLAGS) &= ~(FLAG)))
+#endif
+
+#ifndef TOGGLE_FLAG
+#define TOGGLE_FLAG(FLAGS, FLAG) ((void)((FLAGS) ^= (FLAG)))
+#endif
+
+#ifndef IS_FLAG_SET
+#define IS_FLAG_SET(FLAGS, FLAG) (((FLAGS) & (FLAG)) != 0)
+#endif
