@@ -10,7 +10,8 @@
 typedef struct Compiler Compiler;
 
 #define VANE_LANG_EXT                           ".vn"
-#define COMPILER_DEFAULT_PACKAGES_COUNT         8
+#define COMPILER_DEFAULT_PACKAGE_COUNT          8
+#define COMPILER_DEFAULT_SOURCE_FILE_COUNT      8
 #define COMPILER_DEFAULT_COLLECTION_PATHS_COUNT 2
 
 struct Compiler {
@@ -20,6 +21,10 @@ struct Compiler {
     // value: [Package*, &package_destroy]
     Hashmap packages;
 
+    // key:   [String, &string_destroy]
+    // value: [SourceFile*, &source_file_destroy]
+    Hashmap source_files;
+
     Package* entry_point;
 };
 
@@ -27,4 +32,4 @@ Compiler compiler_create(BuildOptions* build_options);
 
 void compiler_destroy(Compiler* compiler);
 
-Package* compiler_load_packages(Compiler* compiler, StringView path);
+Package* compiler_discover_packages(Compiler* compiler, StringView path);

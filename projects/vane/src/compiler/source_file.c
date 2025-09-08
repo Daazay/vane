@@ -30,8 +30,6 @@ FileLoadStatus source_file_load_content(SourceFile* source_file) {
         return FILE_LOAD_OK;
     }
 
-    FileLoadStatus status = file_content_load(source_file->path, &source_file->content.data, &source_file->content.cap);
-    source_file->content.len = source_file->content.cap;
-
+    FileLoadStatus status = file_content_load(source_file->path, &source_file->content.data, &source_file->content.len);
     return status;
 }

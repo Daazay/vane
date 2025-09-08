@@ -17,40 +17,6 @@ static inline void print_indent(u32 indent) {
     }
 }
 
-// Print a package and its contents recursively
-static void print_package_tree(const Package* package, u32 indent) {
-    StringView basename = path_get_basename(package->path);
-    print_indent(indent);
-    printf("📦 Package: %.*s\n", (int)basename.len, basename.data);
-
-    // Print source files
-    if (package->source_files.size > 0) {
-        print_indent(indent);
-        printf("  📄 Source Files (%u):\n", package->source_files.size);
-
-        HashmapIterator it = hashmap_get_it(&package->source_files);
-        String file_path;
-        const SourceFile* source_file;
-
-        while (hashmap_it_next(&it, &file_path, &source_file)) {
-            StringView filename = path_get_basename(string_get_view(file_path));
-            print_indent(indent + 2);
-            printf("• %.*s\n", (int)filename.len, filename.data);
-        }
-    }
-
-    // Print subpackages
-    if (package->subpackages.size > 0) {
-        print_indent(indent);
-        printf("  📦 Subpackages (%u):\n", package->subpackages.size);
-
-        for (u32 i = 0; i < package->subpackages.size; i++) {
-            Package* subpackage = vector_at(package->subpackages, i);
-            print_package_tree(subpackage, indent + 2);
-        }
-    }
-}
-
 // Print build options information
 static void print_build_options(const BuildOptions* options) {
     printf("Build Configuration:\n");
@@ -104,19 +70,24 @@ static void print_compiler_info(const Compiler* compiler) {
     printf("Packages Loaded: %u\n", compiler->packages.size);
 
     // Find and print the root package (the one without a parent)
-    HashmapIterator it = hashmap_get_it(&compiler->packages);
-    String package_path;
-    const Package* package;
+    HashmapIterator package_it = hashmap_get_it(&compiler->packages);
+    StringView package_path = STRING_VIEW_EMPTY;
 
-    while (hashmap_it_next(&it, &package_path, &package)) {
-        if (package == NULL) {
-            continue;
-        }
-        if (package->parent_package == NULL) {
-            printf("Root Package: %.*s\n\n", (int)package_path.len, package_path.data);
-            print_package_tree(package, 0);
-            break;
-        }
+    printf("📦 Packages(%u):\n", compiler->packages.size);
+    while (hashmap_it_next(&package_it, &package_path, NULL)) {
+        StringView basename = path_get_basename(package_path);
+        print_indent(2);
+        printf("• %.*s\n", SV_ARG(basename));
+    }
+
+    HashmapIterator source_file_it = hashmap_get_it(&compiler->source_files);
+    StringView source_file_path = STRING_VIEW_EMPTY;
+
+    printf("📄 Source Files (%u):\n", compiler->source_files.size);
+    while (hashmap_it_next(&source_file_it, &source_file_path, NULL)) {
+        StringView basename = path_get_basename(source_file_path);
+        print_indent(2);
+        printf("• %.*s\n", SV_ARG(basename));
     }
 }
 
@@ -139,7 +110,7 @@ int main(int argc, const char **argv) {
     Compiler compiler = compiler_create(&build_options);
 
     // Load root package
-    Package* root_package = compiler_load_packages(&compiler, string_get_view(build_options.root_path));
+    Package* root_package = compiler_discover_packages(&compiler, string_get_view(build_options.root_path));
     if (root_package == NULL) {
         printf("failed to project from path: \"%.*s\"\n", (i32)build_options.root_path.len, build_options.root_path.data);
         compiler_destroy(&compiler);
@@ -147,77 +118,47 @@ int main(int argc, const char **argv) {
         return 1;
     }
 
-    HashmapIterator it = hashmap_get_it(&compiler.packages);
-    const Package* package = NULL;
+    HashmapIterator source_file_it = hashmap_get_it(&compiler.source_files);
+    StringView source_file_path = STRING_VIEW_EMPTY;
 
-    while (hashmap_it_next(&it, NULL, &package)) {
-        if (package == NULL) {
+    while (hashmap_it_next(&source_file_it, &source_file_path, NULL)) {
+        StringView basename = path_get_basename(source_file_path);
+        printf("filepath: %.*s\n", SV_ARG(basename));
+
+        String content = STRING_EMPTY;
+        FileLoadStatus status = file_content_load(source_file_path, (u8**)&content.data, &content.len);
+        if (status != FILE_LOAD_OK) {
             continue;
         }
 
-        HashmapIterator it2 = hashmap_get_it(&package->source_files);
-        const SourceFile* source_file = NULL;
+        TokenStream ts = token_stream_create(0, source_file_path, string_get_view(content));
 
-        while (hashmap_it_next(&it2, NULL, &source_file)) {
-            if (source_file == NULL) {
-                continue;
-            }
+        while (!ts.done) {
+            const Token* token = token_stream_advance(&ts);
 
-            StringView content = STRING_VIEW_EMPTY;
-            FileLoadStatus status = file_content_load(source_file->path, (u8**)&content.data, &content.len);
+            printf("  [%10s][", token_kind_get_name(token->kind));
 
-            if (status != FILE_LOAD_OK) {
-                continue;
-            }
+            if (IS_FLAG_SET(token->flags, TOKEN_FLAG_FIRST_IN_LINE)) {
+                printf(" FIRST");
+            } else { printf("      "); }
+            if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_LEADING_WS)) {
+                printf(" | LEAD_WS");
+            } else { printf(" |        "); }
+            if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_LEADING_LBR)) {
+                printf(" | LEAD_LBR");
+            } else { printf(" |         "); }
+            if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_TRAILING_WS)) {
+                printf(" | TRAIL_WS");
+            } else { printf(" |         "); }
+            if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_TRAILING_LBR)) {
+                printf(" | TRAIL_LBR ");
+            } else { printf(" |           "); }
 
-            printf("file: %.*s\n", (i32)source_file->path.len, (const char*)source_file->path.data);
-
-            TokenStream ts = token_stream_create(0, source_file->path, content);
-
-            while (!ts.done) {
-                const Token* token = token_stream_advance(&ts);
-
-                printf("  [%10s][", token_kind_get_name(token->kind));
-
-                if (IS_FLAG_SET(token->flags, TOKEN_FLAG_FIRST_IN_LINE)) {
-                    printf(" FIRST");
-                } else { printf("      "); }
-                if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_LEADING_WS)) {
-                    printf(" | LEAD_WS");
-                } else { printf(" |        "); }
-                if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_LEADING_LBR)) {
-                    printf(" | LEAD_LBR");
-                } else { printf(" |         "); }
-                if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_TRAILING_WS)) {
-                    printf(" | TRAIL_WS");
-                } else { printf(" |         "); }
-                if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_TRAILING_LBR)) {
-                    printf(" | TRAIL_LBR ");
-                } else { printf(" |           "); }
-                //if (IS_FLAG_SET(token.flags, TOKEN_FLAG_HAS_AROUND_LBR)) {
-                //    if (f1) { printf(" | "); }
-                //
-                //    printf("AROUND_LBR");
-                //}
-                //if (IS_FLAG_SET(token.flags, TOKEN_FLAG_HAS_LEADING_WS_OR_LBR)) {
-                //    if (f1) { printf(" | "); }
-                //
-                //    printf("LEAD_ALL  ");
-                //}
-                //if (IS_FLAG_SET(token.flags, TOKEN_FLAG_HAS_TRAILING_WS_OR_LBR)) {
-                //    if (f1) { printf(" | "); }
-                //
-                //    printf("TRAIL_ALL ");
-                //}
-                //if (IS_FLAG_SET(token.flags, TOKEN_FLAG_HAS_AROUND_WS_OR_LBR)) {
-                //    if (f1) { printf(" | "); }
-                //
-                //    printf("AROUND_ALL");
-                //}
-
-                printf("] - %.*s\n", (i32)token->value.len, (const char*)token->value.data);
-            }
+            printf("] - %.*s\n", SV_ARG(token->value));
         }
+
+        token_stream_destroy(&ts);
+        string_destroy(&content);
     }
 
     print_build_options(&build_options);

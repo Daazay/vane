@@ -275,14 +275,14 @@ void build_options_init(BuildOptions* build_options) {
     build_options->root_path = (String){ 0 };
 
     build_options->collections = hashmap_create(4,
-        HASHMAP_KEY_SPECS(String, &__string_get_hash, &__string_eq_str, &string_destroy),
+        HASHMAP_KEY_SPECS(String, &string_view_item_hash, &string_view_item_eq, &string_destroy),
         HASHMAP_VALUE_SPECS(String, &string_destroy)
     );
 
     build_options->output_dir = string_from_cstr("./build");
     build_options->jobs = 1;
     build_options->defines = hashmap_create(4,
-        HASHMAP_KEY_SPECS(String, &__string_get_hash, &__string_eq_str, &string_destroy),
+        HASHMAP_KEY_SPECS(String, &string_view_item_hash, &string_view_item_eq, &string_destroy),
         HASHMAP_VALUE_SPECS(String, &string_destroy)
     );
 }

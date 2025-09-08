@@ -15,6 +15,7 @@
 
 #include "vane/utils/vector.h"
 #include "vane/utils/string_utils.h"
+#include "vane/utils/string_builder.h"
 
 static u64 path_skip_separators(StringView path, u64 offset) {
     while (offset < path.len && is_path_sep(path.data[offset])) {
@@ -30,9 +31,26 @@ static u64 path_find_next_separator(StringView path, u64 offset) {
     return offset;
 }
 
+static bool is_path_unc(StringView path) {
+    if (path.len < 5) {
+        return false;
+    }
+    if (!(is_path_sep(path.data[0]) && is_path_sep(path.data[1]))) {
+        return false;
+    }
+
+    u64 server_end = path_find_next_separator(path, 2);
+    if (server_end <= 2) {
+        return false;
+    }
+
+    u64 share_end = path_find_next_separator(path, server_end + 1);
+    return share_end > server_end + 1;
+}
+
 #if defined(PLATFORM_WINDOWS)
 
-static bool is_win_drive_root(StringView path) {
+static bool is_path_win_drive_root(StringView path) {
     return path.len >= 3 &&
         is_alpha(path.data[0]) &&
         (path.data[1] == ':') &&
@@ -60,9 +78,10 @@ static String win_utf16_to_utf8(const u16* buf, u64 len) {
         return STRING_EMPTY;
     }
 
-    String out = string_create(u8_len);
-    out.len = convert_utf16_to_utf8(buf, len, out.data, u8_len);
-    return out;
+    StringBuilder sb = string_builder_create(u8_len);
+    sb.len = convert_utf16_to_utf8(buf, len, sb.data, u8_len);
+
+    return string_builder_release(&sb);
 }
 
 static DWORD win_path_get_attrs(StringView path) {
@@ -80,23 +99,11 @@ static DWORD win_path_get_attrs(StringView path) {
 
 #endif
 
-static bool is_unc_path(StringView path) {
-    if (path.len < 5) {
-        return false;
+static void path_builder_append_sv_with_sep(StringBuilder* sb, StringView sv, bool add_sep) {
+    if (sb->len > 0 && add_sep && !is_path_sep(sb->data[sb->len - 1])) {
+        string_builder_append_c(sb, PATH_SEP);
     }
-    if (!(is_path_sep(path.data[0]) && is_path_sep(path.data[1]))) {
-        return false;
-    }
-
-    // find server name end
-    u64 server_end = path_find_next_separator(path, 2);
-    if (server_end <= 2) {
-        return false;
-    }
-
-    // find share name end
-    u64 share_end = path_find_next_separator(path, server_end + 1);
-    return share_end > server_end + 1;
+    string_builder_append_sv(sb, sv);
 }
 
 String path_get_absolute(StringView path) {
@@ -157,11 +164,11 @@ String path_get_normalized(StringView path) {
     Vector comps = vector_create(4, VECTOR_SPECS(StringView, NULL));
     u64 i = 0;
 
-    StringView prefixes[2] = { STRING_VIEW_EMPTY, STRING_VIEW_EMPTY };
+    // Extract prefixes (UNC, Windows drive)
+    StringView prefixes[2] = { STRING_VIEW_EMPTY, STRING_VIEW_EMPTY, };
     bool is_abs = is_path_absolute(path);
 
-    // Find prefix (UNC, Windows drive)
-    if (is_unc_path(path)) {
+    if (is_path_unc(path)) {
         u64 server_end = path_find_next_separator(path, 2);
         u64 share_end = path_find_next_separator(path, server_end + 1);
 
@@ -171,9 +178,8 @@ String path_get_normalized(StringView path) {
         i = share_end;
     }
 #if defined(PLATFORM_WINDOWS)
-    else if (is_win_drive_root(path)) {
+    else if (is_path_win_drive_root(path)) {
         prefixes[0] = string_view_subview(path, 0, 2);
-
         i = 2;
     }
 #endif
@@ -209,43 +215,42 @@ String path_get_normalized(StringView path) {
         vector_push_back(&comps, &comp);
     }
 
-    String result = string_create(64);
+    // Build normalized path
+    StringBuilder sb = string_builder_create(64);
 
     if (!is_string_view_empty(prefixes[0])) {
         if (!is_string_view_empty(prefixes[1])) {
-            string_append_c(&result, PATH_SEP);
-            string_append_c(&result, PATH_SEP);
-            string_append_sv(&result, prefixes[0]);
-            string_append_c(&result, PATH_SEP);
-            string_append_sv(&result, prefixes[1]);
+            string_builder_append_c(&sb, PATH_SEP);
+            string_builder_append_c(&sb, PATH_SEP);
+            string_builder_append_sv(&sb, prefixes[0]);
+            string_builder_append_c(&sb, PATH_SEP);
+            string_builder_append_sv(&sb, prefixes[1]);
         }
         else {
-            string_append_sv(&result, prefixes[0]);
+            string_builder_append_sv(&sb, prefixes[0]);
         }
-        string_append_c(&result, PATH_SEP);
+        string_builder_append_c(&sb, PATH_SEP);
     }
     else if (is_abs) {
-        string_append_c(&result, PATH_SEP);
+        string_builder_append_c(&sb, PATH_SEP);
     }
 
+
+    // Add components
     for (u32 j = 0; j < comps.size; ++j) {
-        if (result.len > 0 && !is_path_sep(result.data[result.len - 1])) {
-            string_append_c(&result, PATH_SEP);
-        }
         const StringView* p = vector_at(comps, j);
-        string_append_sv(&result, *p);
+        path_builder_append_sv_with_sep(&sb, *p, true);
     }
 
-    if (result.len == 0) {
-        string_append_c(&result, '.');
+    // Handle empty path
+    if (sb.len == 0) {
+        string_builder_append_c(&sb, '.');
     }
 
-    string_shrink_to_fit(&result);
     vector_destroy(&comps);
 
-    //printf("%.*s\n", (i32)result.len, (const char*)result.data);
-
-    return result;
+    string_builder_shrink_to_fit(&sb);
+    return string_builder_release(&sb);
 }
 
 String path_get_cwd() {
@@ -269,7 +274,7 @@ String path_join_cstr_impl(const char* path0, ...) {
     va_list va;
     va_start(va, path0);
 
-    String result = string_create(32);
+    StringBuilder sb = string_builder_create(32);
     const char* p = path0;
     bool first = true;
 
@@ -281,47 +286,40 @@ String path_join_cstr_impl(const char* path0, ...) {
             continue;
         }
 
-        if (!first) {
-            string_append_c(&result, PATH_SEP);
-        }
-
-        string_append_sv(&result, sv);
+        path_builder_append_sv_with_sep(&sb, sv, !first);
         first = false;
     }
 
     va_end(va);
 
-    string_shrink_to_fit(&result);
-    return result;
+    string_builder_shrink_to_fit(&sb);
+    return string_builder_release(&sb);
 }
 
 String path_join_sv_impl(StringView path0, ...) {
     va_list va;
     va_start(va, path0);
 
-    String result = string_create(32);
+    StringBuilder sb = string_builder_create(32);
     StringView path = path0;
     bool first = true;
 
     while (!is_string_view_empty(path)) {
-        if (!first) {
-            string_append_c(&result, PATH_SEP);
-        }
-        string_append_sv(&result, path);
+        path_builder_append_sv_with_sep(&sb, path, !first);
         first = false;
         path = va_arg(va, StringView);
     }
 
     va_end(va);
 
-    return result;
+    string_builder_shrink_to_fit(&sb);
+    return string_builder_release(&sb);
 }
 
 StringView path_get_dir(StringView path) {
     if (is_string_view_empty(path)) {
         return STR_LIT(".");
     }
-
     if (string_view_eq_sv(path, STR_LIT("."))) {
         return STR_LIT(".");
     }
@@ -335,6 +333,7 @@ StringView path_get_dir(StringView path) {
         end--;
     }
 
+    // Find last separator
     u64 last_sep = (u64)NPOS;
     for (u64 i = end; i-- > 0; ) {
         if (is_path_sep(path.data[i])) {
@@ -420,9 +419,9 @@ bool is_path_absolute(StringView path) {
         return false;
     }
 #if defined(PLATFORM_WINDOWS)
-    return is_win_drive_root(path) || is_unc_path(path) || is_path_sep(path.data[0]);
+    return is_path_win_drive_root(path) || is_path_unc(path) || is_path_sep(path.data[0]);
 #else
-    return is_unc_path(path) || path.data[0] == '/';
+    return is_path_unc(path) || path.data[0] == '/';
 #endif
 }
 

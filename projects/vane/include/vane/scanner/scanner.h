@@ -17,6 +17,9 @@ struct Scanner {
     StringView content;
     u64 pos;
 
+    Rune curr_rune;
+    u32 curr_rune_len;
+
     TokenFlags flags;
 };
 

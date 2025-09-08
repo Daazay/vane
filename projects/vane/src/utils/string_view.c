@@ -7,7 +7,7 @@
 // -- creation --
 
 StringView string_view_create(const u8* data, u64 len) {
-    if (data == NULL && len > 0) {
+    if (len == 0 || data == NULL) {
         return STRING_VIEW_EMPTY;
     }
     return (StringView) { .data = data, .len = len, };
@@ -26,7 +26,7 @@ StringView string_view_from_cstr(const char* cstr) {
     return (StringView) { .data = (const u8*)cstr, .len = len, };
 }
 
-// --  comparison --
+// -- comparison --
 
 bool is_string_view_empty(StringView sv) {
     return sv.data == NULL || sv.len == 0;
@@ -180,7 +180,7 @@ StringView string_view_subview(StringView sv, u64 offset, u64 len) {
 
     return (StringView) {
         .data = sv.data + offset,
-        .len = reslen,
+            .len = reslen,
     };
 }
 
@@ -257,12 +257,12 @@ Rune string_view_rune_at(StringView sv, u64 idx, u64* byte_idx, u32* rune_len) {
 
 // -- search --
 
-u64 string_view_find_c(StringView sv, char c) {
+u64 string_view_find_c_with_offset(StringView sv, u64 offset, char c) {
     if (is_string_view_empty(sv)) {
         return (u64)NPOS;
     }
 
-    for (u64 i = 0; i < sv.len; ++i) {
+    for (u64 i = offset; i < sv.len; ++i) {
         if (sv.data[i] == c) {
             return i;
         }
@@ -271,15 +271,15 @@ u64 string_view_find_c(StringView sv, char c) {
     return (u64)NPOS;
 }
 
-u64 string_view_find_rune(StringView sv, Rune r) {
-    if (is_string_view_empty(sv)) {
+u64 string_view_find_rune_with_byte_offset(StringView sv, u64 byte_offset, Rune r) {
+    if (is_string_view_empty(sv) || byte_offset >= sv.len) {
         return (u64)NPOS;
     }
 
     u8 buf[4] = { 0 };
     u64 len = encode_utf8_rune(r, buf, sizeof(buf));
 
-    for (u64 i = 0; i <= sv.len - len; ++i) {
+    for (u64 i = byte_offset; i + len <= sv.len; ++i) {
         if (sv.data[i] == buf[0] && memcmp(sv.data + i, buf, len) == 0) {
             return i;
         }
@@ -288,7 +288,30 @@ u64 string_view_find_rune(StringView sv, Rune r) {
     return (u64)NPOS;
 }
 
-u64 string_view_find_cstr(StringView sv, const char* cstr) {
+u64 string_view_find_rune_with_rune_offset(StringView sv, u64 rune_offset, Rune r) {
+    if (is_string_view_empty(sv)) {
+        return (u64)NPOS;
+    }
+
+    u64 pos = 0;
+    u64 count = 0;
+    u32 read_len = 0;
+
+    while (pos < sv.len) {
+        Rune cur = decode_utf8_rune(sv.data + pos, sv.len - pos, &read_len);
+
+        if (count >= rune_offset && cur == r) {
+            return count;
+        }
+
+        pos += read_len;
+        ++count;
+    }
+
+    return (u64)NPOS;
+}
+
+u64 string_view_find_cstr_with_offset(StringView sv, u64 offset, const char* cstr) {
     if (cstr == NULL) {
         return 0;
     }
@@ -306,7 +329,7 @@ u64 string_view_find_cstr(StringView sv, const char* cstr) {
         return (u64)NPOS;
     }
 
-    for (u64 i = 0; i <= sv.len - len; ++i) {
+    for (u64 i = offset; i <= sv.len - len; ++i) {
         if (memcmp(sv.data + i, cstr, len) == 0) {
             return i;
         }
@@ -315,7 +338,7 @@ u64 string_view_find_cstr(StringView sv, const char* cstr) {
     return (u64)NPOS;
 }
 
-u64 string_view_find_bytes(StringView sv, const u8* data, u64 len) {
+u64 string_view_find_bytes_with_offset(StringView sv, u64 offset, const u8* data, u64 len) {
     if (data == NULL || len == 0) {
         return 0;
     }
@@ -328,7 +351,7 @@ u64 string_view_find_bytes(StringView sv, const u8* data, u64 len) {
         return (u64)NPOS;
     }
 
-    for (u64 i = 0; i <= sv.len - len; ++i) {
+    for (u64 i = offset; i <= sv.len - len; ++i) {
         if (memcmp(sv.data + i, data, len) == 0) {
             return i;
         }
@@ -337,21 +360,21 @@ u64 string_view_find_bytes(StringView sv, const u8* data, u64 len) {
     return (u64)NPOS;
 }
 
-u64 string_view_find_sv(StringView sv1, StringView sv2) {
+u64 string_view_find_sv_with_offset(StringView sv, u64 offset, StringView sv2) {
     if (is_string_view_empty(sv2)) {
         return 0;
     }
 
-    if (is_string_view_empty(sv1)) {
+    if (is_string_view_empty(sv)) {
         return (u64)NPOS;
     }
 
-    if (sv1.len < sv2.len) {
+    if (sv.len < sv2.len) {
         return (u64)NPOS;
     }
 
-    for (u64 i = 0; i <= sv1.len - sv2.len; ++i) {
-        if (memcmp(sv1.data + i, sv2.data, sv2.len) == 0) {
+    for (u64 i = offset; i <= sv.len - sv2.len; ++i) {
+        if (memcmp(sv.data + i, sv2.data, sv2.len) == 0) {
             return i;
         }
     }
@@ -359,104 +382,190 @@ u64 string_view_find_sv(StringView sv1, StringView sv2) {
     return (u64)NPOS;
 }
 
-u64 string_view_find_last_c(StringView sv, char c) {
+//
+
+u64 string_view_find_last_c_with_offset(StringView sv, u64 offset, char c) {
     if (is_string_view_empty(sv)) {
         return (u64)NPOS;
     }
-
-    for (u64 i = sv.len; i-- > 0; ) {
-        if (sv.data[i] == c) {
+    if (offset >= sv.len) {
+        offset = sv.len - 1;
+    }
+    for (u64 i = offset + 1; i-- > 0;) {
+        if (sv.data[i] == (u8)c) {
             return i;
         }
     }
-
     return (u64)NPOS;
 }
 
-u64 string_view_find_last_rune(StringView sv, Rune r) {
+u64 string_view_find_last_rune_with_byte_offset(StringView sv, u64 byte_offset, Rune r) {
     if (is_string_view_empty(sv)) {
         return (u64)NPOS;
+    }
+    if (byte_offset >= sv.len) {
+        byte_offset = sv.len - 1;
     }
 
     u8 buf[4] = { 0 };
-    u64 len = encode_utf8_rune(r, buf, sizeof(buf));
-
-    for (u64 i = sv.len - len + 1; i-- > 0; ) {
-        if (sv.data[i] == buf[0] && memcmp(sv.data + i, buf, len) == 0) {
-            return i;
-        }
+    u64 rlen = encode_utf8_rune(r, buf, sizeof(buf));
+    if (rlen == 0) {
+        return (u64)NPOS;
     }
 
+    if (byte_offset + 1 < rlen) {
+        return (u64)NPOS;
+    }
+
+    for (u64 i = byte_offset + 1 - rlen; i + 1 > 0; i--) {
+        if (memcmp(sv.data + i, buf, rlen) == 0) {
+            return i;
+        }
+        if (i == 0) break;
+    }
     return (u64)NPOS;
 }
 
-u64 string_view_find_last_cstr(StringView sv, const char* cstr) {
+u64 string_view_find_last_rune_with_rune_offset(StringView sv, u64 rune_offset, Rune r) {
+    if (is_string_view_empty(sv)) {
+        return (u64)NPOS;
+    }
+
+    // Count runes
+    u64 total = string_view_count_runes(sv);
+    if (rune_offset >= total) {
+        rune_offset = total - 1;
+    }
+
+    u64 pos = 0;
+    u64 count = 0;
+    u32 read_len = 0;
+    u64 last_found = (u64)NPOS;
+
+    while (pos < sv.len) {
+        Rune cur = decode_utf8_rune(sv.data + pos, sv.len - pos, &read_len);
+        if (cur == r && count <= rune_offset) {
+            last_found = count;
+        }
+        pos += read_len;
+        ++count;
+    }
+    return last_found;
+}
+
+u64 string_view_find_last_cstr_with_offset(StringView sv, u64 offset, const char* cstr) {
     if (cstr == NULL) {
         return 0;
     }
-
     if (is_string_view_empty(sv)) {
         return (u64)NPOS;
     }
 
-    const u64 len = strlen(cstr);
+    u64 len = strlen(cstr);
     if (len == 0) {
         return 0;
     }
-
     if (sv.len < len) {
         return (u64)NPOS;
     }
 
-    for (u64 i = sv.len - len + 1; i-- > 0;) {
+    if (offset >= sv.len) {
+        offset = sv.len - 1;
+    }
+
+    u64 start_pos = (offset + 1 >= len)
+        ? offset + 1 - len
+        : 0;
+
+    for (u64 i = start_pos; i + 1 > 0; i--) {
         if (memcmp(sv.data + i, cstr, len) == 0) {
             return i;
         }
+        if (i == 0) break;
     }
-
     return (u64)NPOS;
 }
 
-u64 string_view_find_last_bytes(StringView sv, const u8* data, u64 len) {
+u64 string_view_find_last_bytes_with_offset(StringView sv, u64 offset, const u8* data, u64 len) {
     if (data == NULL || len == 0) {
         return 0;
     }
-
     if (is_string_view_empty(sv)) {
         return (u64)NPOS;
     }
-
     if (sv.len < len) {
         return (u64)NPOS;
     }
 
-    for (u64 i = sv.len - len + 1; i-- > 0; ) {
+    if (offset >= sv.len) {
+        offset = sv.len - 1;
+    }
+
+    u64 start_pos = (offset + 1 >= len)
+        ? offset + 1 - len
+        : 0;
+
+    for (u64 i = start_pos; i + 1 > 0; i--) {
         if (memcmp(sv.data + i, data, len) == 0) {
             return i;
         }
+        if (i == 0) break;
     }
-
     return (u64)NPOS;
 }
 
-u64 string_view_find_last_sv(StringView sv1, StringView sv2) {
+u64 string_view_find_last_sv_with_offset(StringView sv, u64 offset, StringView sv2) {
     if (is_string_view_empty(sv2)) {
         return 0;
     }
-
-    if (is_string_view_empty(sv1)) {
+    if (is_string_view_empty(sv)) {
+        return (u64)NPOS;
+    }
+    if (sv.len < sv2.len) {
         return (u64)NPOS;
     }
 
-    if (sv1.len < sv2.len) {
-        return (u64)NPOS;
+    if (offset >= sv.len) {
+        offset = sv.len - 1;
     }
 
-    for (u64 i = sv1.len - sv2.len + 1; i-- > 0; ) {
-        if (memcmp(sv1.data + i, sv2.data, sv2.len) == 0) {
+    u64 start_pos = (offset + 1 >= sv2.len)
+        ? offset + 1 - sv2.len
+        : 0;
+
+    for (u64 i = start_pos; i + 1 > 0; i--) {
+        if (memcmp(sv.data + i, sv2.data, sv2.len) == 0) {
             return i;
         }
+        if (i == 0) break;
     }
-
     return (u64)NPOS;
 }
+
+//
+
+u64 string_view_find_c(StringView sv, char c);
+
+u64 string_view_find_rune(StringView sv, Rune r);
+
+u64 string_view_find_rune_byte(StringView sv, Rune r);
+
+u64 string_view_find_cstr(StringView sv, const char* cstr);
+
+u64 string_view_find_bytes(StringView sv, const u8* data, u64 len);
+
+u64 string_view_find_sv(StringView sv, StringView sv2);
+
+//
+
+u64 string_view_find_last_c(StringView sv, char c);
+
+u64 string_view_find_last_rune(StringView sv, Rune r);
+
+u64 string_view_find_last_rune_byte(StringView sv, Rune r);
+
+u64 string_view_find_last_cstr(StringView sv, const char* cstr);
+
+u64 string_view_find_last_bytes(StringView sv, const u8* data, u64 len);
+
+u64 string_view_find_last_sv(StringView sv, StringView sv2);

@@ -15,7 +15,9 @@
 #include <errno.h>
 #endif
 
+#include "vane/utils/path.h"
 #include "vane/utils/string.h"
+#include "vane/utils/string_builder.h"
 
 static inline u64 strip_utf8_dom(const u8* buf, u64 len) {
     if (len >= 3 && buf[0] == 0xEF && buf[1] == 0xBB && buf[2] == 0xBF) {
@@ -26,6 +28,42 @@ static inline u64 strip_utf8_dom(const u8* buf, u64 len) {
 
 #if defined(PLATFORM_WINDOWS)
 
+static u64 filetime_to_unixtime(const FILETIME* ft) {
+    ULARGE_INTEGER ull = { 0 };
+    ull.LowPart = ft->dwLowDateTime;
+    ull.HighPart = ft->dwHighDateTime;
+    return (ull.QuadPart / 10000000) - 11644473600LL;
+}
+
+static u16* file_win_utf8_to_utf16(StringView path, u64* out_len) {
+    *out_len = convert_utf8_to_utf16(path.data, path.len, NULL, 0);
+
+    if (*out_len == UNICODE_INVALID_LEN) {
+        return NULL;
+    }
+
+    u16* buf = malloc((*out_len + 1) * sizeof(u16));
+    assert(buf != NULL);
+
+    convert_utf8_to_utf16(path.data, path.len, buf, *out_len);
+    buf[*out_len] = 0;
+
+    return buf;
+}
+
+static String file_win_utf16_to_utf8(const u16* buf, u64 len) {
+    u64 u8_len = convert_utf16_to_utf8(buf, len, NULL, 0);
+
+    if (u8_len == UNICODE_INVALID_LEN) {
+        return STRING_EMPTY;
+    }
+
+    StringBuilder sb = string_builder_create(u8_len);
+    sb.len = convert_utf16_to_utf8(buf, len, sb.data, u8_len);
+
+    return string_builder_release(&sb);
+}
+
 static inline FileLoadStatus read_file_content_win(StringView path, u8** out, u64* out_len) {
     assert(out != NULL && out_len != NULL);
 
@@ -33,16 +71,11 @@ static inline FileLoadStatus read_file_content_win(StringView path, u8** out, u6
     *out_len = 0;
 
     // Convert UTF8 to UTF16
-    u64 u16_len = convert_utf8_to_utf16(path.data, path.len, NULL, 0);
-    if (u16_len == UNICODE_INVALID_LEN) {
+    u64 u16_len = 0;
+    u16* u16_buf = file_win_utf8_to_utf16(path, &u16_len);
+    if (u16_buf == NULL || u16_len == UNICODE_INVALID_LEN) {
         return FILE_LOAD_ERR_INVALID_PATH;
     }
-
-    u16* u16_buf = malloc((u16_len + 1) * sizeof(u16));
-    assert(u16_buf != NULL);
-
-    convert_utf8_to_utf16(path.data, path.len, u16_buf, u16_len);
-    u16_buf[u16_len] = 0;
 
     HANDLE h = CreateFileW((LPCWSTR)u16_buf, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     free(u16_buf);
@@ -75,54 +108,42 @@ static inline FileLoadStatus read_file_content_win(StringView path, u8** out, u6
     }
 
     u64 size = (u64)li.QuadPart;
-
     u8* buf = malloc(size + 1);
     assert(buf != NULL);
 
     DWORD did_read = 0;
     BOOL read_status = ReadFile(h, buf, (DWORD)size, &did_read, NULL);
-    if (!read_status || did_read != size) {
-        free(buf);
-        CloseHandle(h);
-        return FILE_LOAD_ERR_READ;
-    }
     CloseHandle(h);
 
-    buf[size] = 0;
+    if (!read_status || did_read != size) {
+        free(buf);
+        return FILE_LOAD_ERR_READ;
+    }
 
+    buf[size] = 0;
     *out = buf;
     *out_len = size;
 
     return FILE_LOAD_OK;
 }
 
-static u64 filetime_to_unixtime(const FILETIME* ft) {
-    ULARGE_INTEGER ull = { 0 };
-    ull.LowPart = ft->dwLowDateTime;
-    ull.HighPart = ft->dwHighDateTime;
-    return (ull.QuadPart / 10000000) - 11644473600LL;
-}
-
 static DirListStatus directory_list_win(StringView path, Vector* entries, bool recursive) {
     assert(entries != NULL);
 
-    String pattern = string_create(path.len + 2);
-    string_append_sv(&pattern, path);
-    string_append_sv(&pattern, STR_LIT("\\*"));
+    // Build search pattern
+    StringBuilder pattern = string_builder_create(path.len + 2);
+    string_builder_append_sv(&pattern, path);
+    string_builder_append_c(&pattern, '\\');
+    string_builder_append_c(&pattern, '*');
 
-    // Convert UTF8 to UTF16
-    u64 u16_pattern_len = convert_utf8_to_utf16(pattern.data, pattern.len, NULL, 0);
-    if (u16_pattern_len == UNICODE_INVALID_LEN) {
-        string_destroy(&pattern);
+    // Convert pattern to UTF16
+    u64 u16_pattern_len = 0;
+    u16* u16_pattern = file_win_utf8_to_utf16(string_builder_get_view(pattern), &u16_pattern_len);
+    string_builder_destroy(&pattern);
+
+    if (u16_pattern == NULL || u16_pattern_len == UNICODE_INVALID_LEN) {
         return DIR_LIST_ERR_INVALID_PATH;
     }
-
-    u16* u16_pattern = malloc((u16_pattern_len + 1) * sizeof(u16));
-    assert(u16_pattern != NULL);
-
-    convert_utf8_to_utf16(pattern.data, pattern.len, u16_pattern, u16_pattern_len);
-    u16_pattern[u16_pattern_len] = 0;
-    string_destroy(&pattern);
 
     WIN32_FIND_DATAW find_data = { 0 };
     HANDLE h = FindFirstFileW((LPCWSTR)u16_pattern, &find_data);
@@ -137,6 +158,8 @@ static DirListStatus directory_list_win(StringView path, Vector* entries, bool r
         }
     }
 
+    DirListStatus status = DIR_LIST_OK;
+
     do {
         // Skip "." and ".." directories
         if (wcscmp(find_data.cFileName, L".") == 0 || wcscmp(find_data.cFileName, L"..") == 0) {
@@ -144,19 +167,14 @@ static DirListStatus directory_list_win(StringView path, Vector* entries, bool r
         }
 
         // Convert filename to UTF8
-        u64 u8_len = convert_utf16_to_utf8((const u16*)find_data.cFileName, wcslen(find_data.cFileName), NULL, 0);
-        if (u8_len == UNICODE_INVALID_LEN) {
+        String filename = file_win_utf16_to_utf8((const u16*)find_data.cFileName, wcslen(find_data.cFileName));
+
+        if (is_string_empty(filename)) {
             continue;
         }
 
-        String filename = string_create(u8_len);
-        filename.len = convert_utf16_to_utf8((const u16*)find_data.cFileName, wcslen(find_data.cFileName), filename.data, u8_len);
-
-        String fullpath = string_create(path.len + filename.len + 1);
-        string_append_sv(&fullpath, path);
-        string_append_c(&fullpath, '\\');
-        string_append_str(&fullpath, filename);
-
+        // Build full path using path_join_sv
+        String fullpath = path_join_sv(path, string_get_view(filename));
         string_destroy(&filename);
 
         DirEntry entry = {
@@ -169,16 +187,15 @@ static DirListStatus directory_list_win(StringView path, Vector* entries, bool r
         vector_push_back(entries, &entry);
 
         if (recursive && entry.is_dir) {
-            DirListStatus status = directory_list_win(string_get_view(fullpath), entries, true);
+            status = directory_list_win(string_get_view(fullpath), entries, true);
             if (status != DIR_LIST_OK) {
-                FindClose(h);
-                return status;
+                break;
             }
         }
     } while (FindNextFileW(h, &find_data));
 
     FindClose(h);
-    return DIR_LIST_OK;
+    return status;
 }
 
 #else
@@ -241,14 +258,11 @@ static inline FileLoadStatus read_file_content_unix(StringView path, u8** out, u
     close(fd);
 
     buf[read_total] = 0;
-
     *out = buf;
     *out_len = read_total;
 
     return FILE_LOAD_OK;
 }
-
-#include <stdio.h>
 
 static DirListStatus directory_list_unix(StringView path, Vector* entries, bool recursive) {
     assert(entries != NULL);
@@ -264,18 +278,19 @@ static DirListStatus directory_list_unix(StringView path, Vector* entries, bool 
         }
     }
 
+    DirListStatus status = DIR_LIST_OK;
     struct dirent* entry_ptr = NULL;
+
     while ((entry_ptr = readdir(dir)) != NULL) {
         StringView filename = string_view_from_cstr(entry_ptr->d_name);
 
-        if (string_view_eq_sv(filename, STR_LIT(".")) || string_view_eq_sv(filename, STR_LIT(".."))) {
+        if (string_view_eq_sv(filename, STR_LIT(".")) ||
+            string_view_eq_sv(filename, STR_LIT(".."))) {
             continue;
         }
 
-        String fullpath = string_create(path.len + filename.len + 1);
-        string_append_sv(&fullpath, path);
-        string_append_c(&fullpath, '/');
-        string_append_sv(&fullpath, filename);
+        // Build full path using path_join_sv
+        String fullpath = path_join_sv(path, filename);
 
         struct stat st;
         if (stat((const char*)fullpath.data, &st) != 0) {
@@ -293,16 +308,15 @@ static DirListStatus directory_list_unix(StringView path, Vector* entries, bool 
         vector_push_back(entries, &entry);
 
         if (recursive && entry.is_dir) {
-            DirListStatus status = directory_list_unix(string_get_view(fullpath), entries, true);
+            status = directory_list_unix(string_get_view(fullpath), entries, true);
             if (status != DIR_LIST_OK) {
-                closedir(dir);
-                return status;
+                break;
             }
         }
     }
 
     closedir(dir);
-    return DIR_LIST_OK;
+    return status;
 }
 
 #endif
@@ -342,7 +356,6 @@ FileLoadStatus file_content_load(StringView path, u8** data, u64* size) {
     }
 
     *data = raw;
-
     return status;
 }
 

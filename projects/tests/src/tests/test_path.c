@@ -166,9 +166,9 @@ UTEST_F(TestPath, path_get_normalized2) {
     StringView input = STR_LIT(".");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT(".")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT(".")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT(".")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT(".")));
 #endif
 }
 
@@ -176,9 +176,9 @@ UTEST_F(TestPath, path_get_normalized3) {
     StringView input = STR_LIT("..");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("..")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("..")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("..")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("..")));
 #endif
 }
 
@@ -186,9 +186,9 @@ UTEST_F(TestPath, path_get_normalized4) {
     StringView input = STR_LIT("file");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("file")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("file")));
 #endif
 }
 
@@ -196,9 +196,9 @@ UTEST_F(TestPath, path_get_normalized5) {
     StringView input = STR_LIT("file.txt");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("file.txt")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("file.txt")));
 #endif
 }
 
@@ -206,9 +206,9 @@ UTEST_F(TestPath, path_get_normalized6) {
     StringView input = STR_LIT("folder\\sub\\file.txt");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder\\sub\\file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder\\sub\\file.txt")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder/sub/file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub/file.txt")));
 #endif
 }
 
@@ -216,9 +216,9 @@ UTEST_F(TestPath, path_get_normalized7) {
     StringView input = STR_LIT("folder/sub/file.txt");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder\\sub\\file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder\\sub\\file.txt")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder/sub/file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub/file.txt")));
 #endif
 }
 
@@ -226,9 +226,9 @@ UTEST_F(TestPath, path_get_normalized8) {
     StringView input = STR_LIT("./file");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("file")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("file")));
 #endif
 }
 
@@ -236,9 +236,9 @@ UTEST_F(TestPath, path_get_normalized9) {
     StringView input = STR_LIT("./folder/../file");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("file")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("file")));
 #endif
 }
 
@@ -246,9 +246,9 @@ UTEST_F(TestPath, path_get_normalized10) {
     StringView input = STR_LIT("folder//sub///file");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder\\sub\\file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder\\sub\\file")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder/sub/file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub/file")));
 #endif
 }
 
@@ -256,9 +256,9 @@ UTEST_F(TestPath, path_get_normalized11) {
     StringView input = STR_LIT("/folder/./sub/../file");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("\\folder\\file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("\\folder\\file")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("/folder/file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("/folder/file")));
 #endif
 }
 
@@ -266,9 +266,9 @@ UTEST_F(TestPath, path_get_normalized12) {
     StringView input = STR_LIT("C:\\folder\\.\\sub\\..\\file");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("C:\\folder\\file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("C:\\folder\\file")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("C:/folder/file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("C:/folder/file")));
 #endif
 }
 
@@ -276,9 +276,9 @@ UTEST_F(TestPath, path_get_normalized13) {
     StringView input = STR_LIT("C:/folder/sub//file.txt");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("C:\\folder\\sub\\file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("C:\\folder\\sub\\file.txt")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("C:/folder/sub/file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("C:/folder/sub/file.txt")));
 #endif
 }
 
@@ -286,10 +286,10 @@ UTEST_F(TestPath, path_get_normalized14) {
     StringView input = STR_LIT("\\\\server\\share\\folder\\..\\file");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("\\\\server\\share\\file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("\\\\server\\share\\file")));
 #else
-    //printf("%.*s\n", (i32)P0.len, (const char*)P0.data);
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("//server/share/file")));
+    printf("%.*s\n", (i32)P0.len, (const char*)P0.data);
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("//server/share/file")));
 #endif
 }
 
@@ -297,9 +297,9 @@ UTEST_F(TestPath, path_get_normalized15) {
     StringView input = STR_LIT("/folder//sub///file");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("\\folder\\sub\\file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("\\folder\\sub\\file")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("/folder/sub/file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("/folder/sub/file")));
 #endif
 }
 
@@ -307,9 +307,9 @@ UTEST_F(TestPath, path_get_normalized16) {
     StringView input = STR_LIT("folder/sub/.");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder\\sub")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder\\sub")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder/sub")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub")));
 #endif
 }
 
@@ -317,9 +317,9 @@ UTEST_F(TestPath, path_get_normalized17) {
     StringView input = STR_LIT("folder/sub/..");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder")));
 #endif
 }
 
@@ -327,9 +327,9 @@ UTEST_F(TestPath, path_get_normalized18) {
     StringView input = STR_LIT(".hidden");
     P0 = path_get_normalized(input);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT(".hidden")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT(".hidden")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT(".hidden")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT(".hidden")));
 #endif
 }
 
@@ -338,54 +338,54 @@ UTEST_F(TestPath, path_get_normalized18) {
 UTEST_F(TestPath, path_join_cstr1) {
     P0 = path_join_cstr("folder", "sub", "file.txt");
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder\\sub\\file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder\\sub\\file.txt")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder/sub/file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub/file.txt")));
 #endif
 }
 
 UTEST_F(TestPath, path_join_cstr2) {
     P0 = path_join_cstr("folder/", "sub/file");
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder/\\sub/file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub/file")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder//sub/file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub/file")));
 #endif
 }
 
 UTEST_F(TestPath, path_join_cstr3) {
     P0 = path_join_cstr("C:\\folder", "sub\\file.txt");
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("C:\\folder\\sub\\file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("C:\\folder\\sub\\file.txt")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("C:\\folder/sub\\file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("C:\\folder/sub\\file.txt")));
 #endif
 }
 
 UTEST_F(TestPath, path_join_cstr4) {
     P0 = path_join_cstr(NULL);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STRING_VIEW_EMPTY));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STRING_VIEW_EMPTY));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STRING_VIEW_EMPTY));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STRING_VIEW_EMPTY));
 #endif
 }
 
 UTEST_F(TestPath, path_join_cstr5) {
     P0 = path_join_cstr("folder", "", "file");
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder\\file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder\\file")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder/file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/file")));
 #endif
 }
 
 UTEST_F(TestPath, path_join_cstr6) {
     P0 = path_join_cstr("folder", "sub", "file.txt");
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder\\sub\\file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder\\sub\\file.txt")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder/sub/file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub/file.txt")));
 #endif
 }
 
@@ -394,54 +394,54 @@ UTEST_F(TestPath, path_join_cstr6) {
 UTEST_F(TestPath, path_join_sv1) {
     P0 = path_join_sv(STR_LIT("folder"), STR_LIT("sub"), STR_LIT("file.txt"));
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder\\sub\\file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder\\sub\\file.txt")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder/sub/file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub/file.txt")));
 #endif
 }
 
 UTEST_F(TestPath, path_join_sv2) {
     P0 = path_join_sv(STR_LIT("folder/"), STR_LIT("sub/file"));
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder/\\sub/file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub/file")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder//sub/file")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub/file")));
 #endif
 }
 
 UTEST_F(TestPath, path_join_sv3) {
     P0 = path_join_sv(STR_LIT("C:\\folder"), STR_LIT("sub\\file.txt"));
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("C:\\folder\\sub\\file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("C:\\folder\\sub\\file.txt")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("C:\\folder/sub\\file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("C:\\folder/sub\\file.txt")));
 #endif
 }
 
 UTEST_F(TestPath, path_join_sv4) {
     P0 = path_join_sv(STRING_VIEW_EMPTY);
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STRING_VIEW_EMPTY));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STRING_VIEW_EMPTY));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STRING_VIEW_EMPTY));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STRING_VIEW_EMPTY));
 #endif
 }
 
 UTEST_F(TestPath, path_join_sv5) {
     P0 = path_join_sv(STR_LIT("folder"), STRING_VIEW_EMPTY, STR_LIT("file"));
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder")));
 #endif
 }
 
 UTEST_F(TestPath, path_join_sv6) {
     P0 = path_join_sv(STR_LIT("folder"), STR_LIT("sub"), STR_LIT("file.txt"));
 #if defined(PLATFORM_WINDOWS)
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder\\sub\\file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder\\sub\\file.txt")));
 #else
-    ASSERT_TRUE(string_eq_sv(P0, STR_LIT("folder/sub/file.txt")));
+    ASSERT_TRUE(string_view_eq_sv(string_get_view(P0), STR_LIT("folder/sub/file.txt")));
 #endif
 }
 
