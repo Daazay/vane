@@ -1,6 +1,6 @@
 #include "vane/diagnostic/report_collector.h"
 
-ReportCollector report_collector_create(DiagnosticSeverity verbosity, bool with_color) {
+ReportCollector report_collector_create(DiagnosticSeverity verbosity) {
     return (ReportCollector) {
         .reports = vector_create(
             REPORT_COLLECTOR_DEFAULT_CAPACITY,
@@ -8,7 +8,6 @@ ReportCollector report_collector_create(DiagnosticSeverity verbosity, bool with_
         ),
         .sev_count = { 0 },
         .verbosity = verbosity,
-        .with_color = with_color,
     };
 }
 
@@ -38,11 +37,11 @@ void report_collector_push_report(ReportCollector* collector, Report* report) {
     vector_push_back(&collector->reports, &report);
 }
 
-void report_collector_print_all(const ReportCollector* collector) {
+void report_collector_print_all(const ReportCollector* collector, bool with_color) {
     assert(collector != NULL);
 
     for (u32 i = 0; i < collector->reports.size; i++) {
         Report* report = vector_at(collector->reports, i);
-        report_print(report, collector->with_color);
+        report_print(report, with_color);
     }
 }

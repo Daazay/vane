@@ -37,3 +37,9 @@ Compiler compiler_create(BuildOptions* build_options);
 void compiler_destroy(Compiler* compiler);
 
 Package* compiler_discover_packages(Compiler* compiler, StringView path);
+
+bool compiler_parse_source_files(Compiler* compiler);
+
+void compiler_dump_ast(const Compiler* compiler);
+
+void compiler_dump_ast_dot(const Compiler* compiler);

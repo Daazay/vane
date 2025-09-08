@@ -21,50 +21,72 @@ TOKEN_MISC(EOF_,       "eof")
 #define TOKEN_PUNC(KIND, NAME, VALUE) TOKEN(KIND, NAME, VALUE)
 #endif
 
-TOKEN_PUNC(L_BRACE,               "l_brace",               "(")
-TOKEN_PUNC(R_BRACE,               "r_brace",               ")")
-TOKEN_PUNC(L_BRACKET,             "l_bracket",             "[")
-TOKEN_PUNC(R_BRACKET,             "r_bracket",             "]")
-TOKEN_PUNC(L_CURLY,               "l_curly",               "{")
-TOKEN_PUNC(R_CURLY,               "r_curly",               "}")
-TOKEN_PUNC(DOT,                   "dot",                   ".")
-TOKEN_PUNC(COMMA,                 "comma",                 ",")
-TOKEN_PUNC(COLON,                 "colon",                 ":")
-TOKEN_PUNC(SEMICOLON,             "semicolon",             ";")
+TOKEN_PUNC(L_CURLY,       "r_curly",       "{")
+TOKEN_PUNC(R_CURLY,       "r_curly",       "}")
 
-TOKEN_PUNC(PLUS,                  "plus",                  "+")
-TOKEN_PUNC(PLUS_EQUAL,            "plus_equal",            "+=")
-TOKEN_PUNC(PLUS_PLUS,             "plus_plus",             "++")
-TOKEN_PUNC(MINUS,                 "minus",                 "-")
-TOKEN_PUNC(MINUS_GREATER,         "minus_greater",         "->")
-TOKEN_PUNC(MINUS_EQUAL,           "minus_equal",           "-=")
-TOKEN_PUNC(MINUS_MINUS,           "minus_minus",           "--")
-TOKEN_PUNC(STAR,                  "star",                  "*")
-TOKEN_PUNC(STAR_EQUAL,            "star_equal",            "*=")
-TOKEN_PUNC(SLASH,                 "slash",                 "/")
-TOKEN_PUNC(SLASH_EQUAL,           "slash_equal",           "/=")
-TOKEN_PUNC(PERCENT,               "percent",               "%")
-TOKEN_PUNC(PERCENT_EQUAL,         "percent_equal",         "%=")
-TOKEN_PUNC(CARET,                 "caret",                 "^")
-TOKEN_PUNC(AMP,                   "amp",                   "&")
-TOKEN_PUNC(AMP_AMP,               "amp_amp",               "&&")
-TOKEN_PUNC(AMP_EQUAL,             "amp_equal",             "&=")
-TOKEN_PUNC(PIPE,                  "pipe",                  "|")
-TOKEN_PUNC(PIPE_PIPE,             "pipe_pipe",             "||")
-TOKEN_PUNC(PIPE_EQUAL,            "pipe_equal",            "|=")
-TOKEN_PUNC(EQUAL,                 "equal",                 "=")
-TOKEN_PUNC(EQUAL_EQUAL,           "equal_equal",           "==")
-TOKEN_PUNC(TILDE,                 "tilde",                 "~")
-TOKEN_PUNC(EXCLAIM,               "exclaim",               "!")
-TOKEN_PUNC(EXCLAIM_EQUAL,         "exclaim_equal",         "!=")
-TOKEN_PUNC(GREATER,               "greater",               ">")
-TOKEN_PUNC(GREATER_EQUAL,         "greater_equal",         ">=")
-TOKEN_PUNC(GREATER_GREATER,       "greater_greater",       ">>")
-TOKEN_PUNC(GREATER_GREATER_EQUAL, "greater_greater_equal", ">>=")
-TOKEN_PUNC(LESS,                  "less",                  "<")
-TOKEN_PUNC(LESS_EQUAL,            "less_equal",            "<=")
-TOKEN_PUNC(LESS_LESS,             "less_less",             "<<")
-TOKEN_PUNC(LESS_LESS_EQUAL,       "less_less_equal",       "<<=")
+TOKEN_PUNC(MINUS_GREATER, "minus_greater", "}")
+
+TOKEN_PUNC(R_BRACE,       "r_brace",       ")")
+TOKEN_PUNC(R_BRACKET,     "r_bracket",     "]")
+TOKEN_PUNC(COMMA,         "comma",         ",")
+TOKEN_PUNC(COLON,         "colon",         ":")
+TOKEN_PUNC(SEMICOLON,     "semicolon",     ";")
+
+/*..............................OP............................................*/
+
+#ifndef TOKEN_OP
+#define TOKEN_OP(KIND, NAME, VALUE, PREC) TOKEN_PUNC(KIND, NAME, VALUE)
+#endif
+
+TOKEN_OP(L_BRACE,   "l_brace",   "(", CALL)
+TOKEN_OP(L_BRACKET, "l_bracket", "[", INDEX)
+TOKEN_OP(DOT,       "dot",       ".", MEMBER)
+
+/*..............................BINOP.........................................*/
+
+#ifndef TOKEN_BINOP
+#define TOKEN_BINOP(KIND, NAME, VALUE, PREC) TOKEN_OP(KIND, NAME, VALUE, PREC)
+#endif
+
+TOKEN_BINOP(PLUS,                  "plus",                  "+",   ADDITIVE)
+TOKEN_BINOP(PLUS_EQUAL,            "plus_equal",            "+=",  ASSIGNMENT)
+TOKEN_BINOP(MINUS,                 "minus",                 "-",   ADDITIVE)
+TOKEN_BINOP(MINUS_EQUAL,           "minus_equal",           "-=",  ASSIGNMENT)
+TOKEN_BINOP(STAR,                  "star",                  "*",   MULTIPLICATIVE)
+TOKEN_BINOP(STAR_EQUAL,            "star_equal",            "*=",  ASSIGNMENT)
+TOKEN_BINOP(SLASH,                 "slash",                 "/",   MULTIPLICATIVE)
+TOKEN_BINOP(SLASH_EQUAL,           "slash_equal",           "/=",  ASSIGNMENT)
+TOKEN_BINOP(PERCENT,               "percent",               "%",   MULTIPLICATIVE)
+TOKEN_BINOP(PERCENT_EQUAL,         "percent_equal",         "%=",  ASSIGNMENT)
+TOKEN_BINOP(CARET,                 "caret",                 "^",   BIN_XOR)
+TOKEN_BINOP(AMP,                   "amp",                   "&",   BIN_AND)
+TOKEN_BINOP(AMP_AMP,               "amp_amp",               "&&",  LOGICAL_AND)
+TOKEN_BINOP(AMP_EQUAL,             "amp_equal",             "&=",  ASSIGNMENT)
+TOKEN_BINOP(PIPE,                  "pipe",                  "|",   BIN_OR)
+TOKEN_BINOP(PIPE_PIPE,             "pipe_pipe",             "||",  LOGICAL_OR)
+TOKEN_BINOP(PIPE_EQUAL,            "pipe_equal",            "|=",  ASSIGNMENT)
+TOKEN_BINOP(EQUAL,                 "equal",                 "=",   ASSIGNMENT)
+TOKEN_BINOP(EQUAL_EQUAL,           "equal_equal",           "==",  EQUALITY)
+TOKEN_BINOP(EXCLAIM_EQUAL,         "exclaim_equal",         "!=",  EQUALITY)
+TOKEN_BINOP(GREATER,               "greater",               ">",   RELATIONAL)
+TOKEN_BINOP(GREATER_EQUAL,         "greater_equal",         ">=",  RELATIONAL)
+TOKEN_BINOP(GREATER_GREATER,       "greater_greater",       ">>",  SHIFT)
+TOKEN_BINOP(GREATER_GREATER_EQUAL, "greater_greater_equal", ">>=", ASSIGNMENT)
+TOKEN_BINOP(LESS,                  "less",                  "<",   RELATIONAL)
+TOKEN_BINOP(LESS_EQUAL,            "less_equal",            "<=",  RELATIONAL)
+TOKEN_BINOP(LESS_LESS,             "less_less",             "<<",  SHIFT)
+TOKEN_BINOP(LESS_LESS_EQUAL,       "less_less_equal",       "<<=", ASSIGNMENT)
+
+/*..............................UNOP..........................................*/
+
+#ifndef TOKEN_UNOP
+#define TOKEN_UNOP(KIND, NAME, VALUE, PREC) TOKEN_OP(KIND, NAME, VALUE, PREC)
+#endif
+
+TOKEN_UNOP(PLUS_PLUS,   "plus_plus",   "++", UNARY)
+TOKEN_UNOP(MINUS_MINUS, "minus_minus", "--", UNARY)
+TOKEN_UNOP(EXCLAIM,     "exclaim",     "!",  UNARY)
+TOKEN_UNOP(TILDE,       "tilde",       "~",  UNARY)
 
 /*..............................KEYWORD.......................................*/
 
@@ -111,8 +133,11 @@ TOKEN_LITERAL(BOOL,   "bool")
 
 /*..............................END OF DEFINES................................*/
 
-#undef TOKEN_LITERAL
-#undef TOKEN_KEYWORD
-#undef TOKEN_PUNC
-#undef TOKEN_MISC
 #undef TOKEN
+#undef TOKEN_MISC
+#undef TOKEN_PUNC
+#undef TOKEN_OP
+#undef TOKEN_BINOP
+#undef TOKEN_UNOP
+#undef TOKEN_KEYWORD
+#undef TOKEN_LITERAL

@@ -12,10 +12,9 @@ struct ReportCollector {
     Vector reports;
     u32 sev_count[DIAG_SEV_COUNT];
     DiagnosticSeverity verbosity;
-    bool with_color;
 };
 
-ReportCollector report_collector_create(DiagnosticSeverity verbosity, bool with_color);
+ReportCollector report_collector_create(DiagnosticSeverity verbosity);
 
 void report_collector_destroy(ReportCollector* collector);
 
@@ -23,7 +22,7 @@ void report_collector_clear(ReportCollector* collector);
 
 void report_collector_push_report(ReportCollector* collector, Report* report);
 
-void report_collector_print_all(const ReportCollector* collector);
+void report_collector_print_all(const ReportCollector* collector, bool with_color);
 
 // -- common --
 

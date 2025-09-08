@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "vane/utils/terminal.h"
+
 #include "vane/utils/hash.h"
 
 #define println(msg, ...)  printf(msg "\n", ##__VA_ARGS__)
@@ -174,19 +176,61 @@ static bool handle_build(ArgParser* parser) {
     return true;
 }
 
+static bool handle_parse(ArgParser* parser) {
+    if (!has_next_arg(parser) || is_next_option(parser)) {
+        eprintln("no path provided for parse command");
+        return false;
+    }
+
+    parser->options->root_path = string_from_cstr(advance_arg(parser));
+    return true;
+}
+
+static bool handle_dump_ast(ArgParser* parser, const char* value) {
+    (void)parser; (void)value;
+    parser->options->dump_ast = true;
+    return true;
+}
+
+static bool handle_dump_ast_dot(ArgParser* parser, const char* value) {
+    (void)parser; (void)value;
+    parser->options->dump_ast_dot = true;
+    return true;
+}
+
+static bool handle_werror(ArgParser* parser, const char* value) {
+    (void)parser; (void)value;
+    parser->options->werror = true;
+    return true;
+}
+
+static bool handle_no_color(ArgParser* parser, const char* value) {
+    (void)parser; (void)value;
+    parser->options->with_color = false;
+    return true;
+}
+
 static OptionSpec general_options[] = {
-    { "output_dir", 'o', true, &handle_output_dir, "Set output directory path (default: ./build)." },
-    { "collection", 'c', true, &handle_collection, "Add collection in NAME=PATH format." },
-    { "verbosity",  'v', true, &handle_verbosity,  "Set verbosity level (0=errors only, 1=warning, 2=info, 3=note, 4=debug)." },
-    { "define",     'D', true, &handle_define,     "Add KEY=VALUE build definitions." },
+    { "output_dir", 'o', true,  &handle_output_dir,  "Set output directory path (default: ./build)." },
+    { "collection", 'c', true,  &handle_collection,  "Add collection in NAME=PATH format." },
+    { "verbosity",  'v', true,  &handle_verbosity,   "Set verbosity level (0=errors only, 1=warning, 2=info, 3=note, 4=debug)." },
+    { "define",     'D', true,  &handle_define,      "Add KEY=VALUE build definitions." },
+
+    { "Werror",       0,  false, &handle_werror,      "Treat warnings as errors." },
+    { "no-color",     0,  false, &handle_no_color,    "Turn off colors in diagnostics." },
 };
 
-//static OptionSpec build_cmd_options[] = { };
+static OptionSpec build_parse_options[] = {
+    { "dump-ast", 0,     false, &handle_dump_ast,    "Dump Graphviz DOT of AST for each file." },
+    { "dump-ast-dot", 0, false, &handle_dump_ast_dot,"Dump Graphviz DOT of AST for each file." },
+};
 
 static CommandSpec commands[] = {
-    { "help",  BUILD_COMMAND_HELP,  &handle_help, NULL, 0,
+    { "help",  BUILD_COMMAND_HELP,      &handle_help,  NULL, 0,
       "Show help message" },
-    { "build", BUILD_COMMAND_BUILD, &handle_build, NULL, 0,
+    { "parse", BUILD_COMMAND_PARSE_AST, &handle_parse, build_parse_options, ARR_SIZE(build_parse_options),
+      "Parse files to ast" },
+    { "build", BUILD_COMMAND_BUILD,     &handle_build, NULL, 0,
       "Build a project" },
 };
 
@@ -252,22 +296,28 @@ void print_usage(const char* argv0) {
     println("General options:");
     for (u32 i = 0; i < ARR_SIZE(general_options); ++i) {
         const OptionSpec* op = &general_options[i];
-        println("  -%c, --%-16s %s",
-            op->short_name ? op->short_name : ' ',
-            op->long_name, op->help);
+        if (op->short_name != '\0') {
+            println("    -%c, --%-14s %s", op->short_name, op->long_name, op->help);
+        }
+        else {
+            println("    --%-18s %s", op->long_name, op->help);
+        }
     }
 
     println("");
     println("Commands:");
     for (u32 i = 0; i < ARR_SIZE(commands); ++i) {
         const CommandSpec* cmd = &commands[i];
-        println("  %-20s %s", cmd->name, cmd->help);
+        println("  %-22s %s", cmd->name, cmd->help);
 
         for (u32 j = 0; j < cmd->options_count; ++j) {
             const OptionSpec* op = &cmd->options[j];
-            println("    -%c, --%-14s %s",
-                op->short_name ? op->short_name : ' ',
-                op->long_name, op->help);
+            if (op->short_name != '\0') {
+                println("    -%c, --%-14s %s", op->short_name, op->long_name, op->help);
+            }
+            else {
+                println("    --%-18s %s", op->long_name, op->help);
+            }
         }
     }
 }
@@ -290,6 +340,7 @@ void build_options_init(BuildOptions* build_options) {
     );
 
     build_options->log_verbosity = 0;
+    build_options->with_color = is_terminal_support_colors();
 }
 
 bool build_options_parse_args(BuildOptions* build_options, int argc, const char** argv) {

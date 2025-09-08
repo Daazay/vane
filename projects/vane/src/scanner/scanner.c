@@ -324,20 +324,34 @@ static inline Token scanner_parse_number_literal(Scanner* scanner) {
 
 static inline u32 keyword_hash_runes(StringView value) {
     if (value.len == 0) {
-        return 0;
+        return 0; // hash 0 for empty; low byte len=0 keeps that invariant
     }
 
     u64 pos = 0;
     u32 rune_len = 0;
     u32 hash = 0;
 
-    for (u64 i = 0; i < 3 && pos < value.len; ++i) {
+    // Read up to 3 runes, remember the last one we actually saw
+    Rune last = 0;
+    u32 count = 0;
+    for (; count < 3 && pos < value.len; ++count) {
         Rune r = string_view_rune_at_byte(value, pos, &rune_len);
+        last = r;
         pos += rune_len;
-        hash |= (r << 8 * (3 - i));
+
+        // place into byte lanes: 24, 16, 8
+        const u32 lane = 24u - 8u * count;       // 24,16,8
+        hash |= (u32)((r & 0xFFu) << lane);
     }
 
-    hash |= value.len & 0xFF;
+    // If fewer than 3 runes were available, pad remaining lanes with the last rune
+    for (; count < 3; ++count) {
+        const u32 lane = 24u - 8u * count;
+        hash |= (u32)((last & 0xFFu) << lane);
+    }
+
+    // length goes to the low 8 bits
+    hash |= (u32)(value.len & 0xFFu);
     return hash;
 }
 

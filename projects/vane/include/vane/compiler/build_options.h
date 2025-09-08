@@ -13,6 +13,7 @@ typedef struct BuildOptions BuildOptions;
 enum BuildCommand{
     BUILD_COMMAND_MISSING = 0,
     BUILD_COMMAND_HELP,
+    BUILD_COMMAND_PARSE_AST,
     BUILD_COMMAND_BUILD,
 };
 
@@ -31,6 +32,13 @@ struct BuildOptions {
     String output_dir;
 
     DiagnosticSeverity log_verbosity;
+    bool with_color;
+
+    // debug
+    bool dump_tokens;
+    bool dump_ast;
+    bool dump_ast_dot;
+    bool werror;
 };
 
 void print_usage(const char* argv0);

@@ -3,92 +3,7 @@
 
 #include <vane/compiler/build_options.h>
 #include <vane/compiler/compiler.h>
-
-#include <vane/utils/hashmap.h>
-#include <vane/utils/path.h>
-#include <vane/utils/file_utils.h>
-
-#include <vane/scanner/token_stream.h>
-
-// Print indentation for tree structure
-static inline void print_indent(u32 indent) {
-    for (u32 i = 0; i < indent; i++) {
-        printf("  ");
-    }
-}
-
-// Print build options information
-static void print_build_options(const BuildOptions* options) {
-    printf("Build Configuration:\n");
-    printf("====================\n");
-
-    printf("Command: ");
-    switch (options->command) {
-        case BUILD_COMMAND_HELP: printf("help\n"); break;
-        case BUILD_COMMAND_BUILD: printf("build\n"); break;
-        case BUILD_COMMAND_MISSING: printf("(none)\n"); break;
-    }
-
-    printf("Root Path: %.*s\n", (int)options->root_path.len, options->root_path.data);
-    printf("Output Directory: %.*s\n", (int)options->output_dir.len, options->output_dir.data);
-
-    // Print collections
-    if (options->collections.size > 0) {
-        printf("Collections (%u):\n", options->collections.size);
-        HashmapIterator it = hashmap_get_it(&options->collections);
-        String name;
-        String path;
-
-        while (hashmap_it_next(&it, &name, &path)) {
-            printf("  %.*s -> %.*s\n",
-                   (int)name.len, name.data,
-                   (int)path.len, path.data);
-        }
-    }
-
-    // Print defines
-    if (options->defines.size > 0) {
-        printf("Defines (%u):\n", options->defines.size);
-        HashmapIterator it = hashmap_get_it(&options->defines);
-        String key;
-        String value;
-
-        while (hashmap_it_next(&it, &key, &value)) {
-            printf("  %.*s = %.*s\n",
-                   (int)key.len, key.data,
-                   (int)value.len, value.data);
-        }
-    }
-    printf("\n");
-}
-
-// Print compiler information
-static void print_compiler_info(const Compiler* compiler) {
-    printf("Compiler Information:\n");
-    printf("=====================\n");
-    printf("Packages Loaded: %u\n", compiler->packages.size);
-
-    // Find and print the root package (the one without a parent)
-    HashmapIterator package_it = hashmap_get_it(&compiler->packages);
-    StringView package_path = STRING_VIEW_EMPTY;
-
-    printf("📦 Packages(%u):\n", compiler->packages.size);
-    while (hashmap_it_next(&package_it, &package_path, NULL)) {
-        StringView basename = path_get_basename(package_path);
-        print_indent(2);
-        printf("• %.*s\n", SV_ARG(basename));
-    }
-
-    HashmapIterator source_file_it = hashmap_get_it(&compiler->source_files);
-    StringView source_file_path = STRING_VIEW_EMPTY;
-
-    printf("📄 Source Files (%u):\n", compiler->source_files.size);
-    while (hashmap_it_next(&source_file_it, &source_file_path, NULL)) {
-        StringView basename = path_get_basename(source_file_path);
-        print_indent(2);
-        printf("• %.*s\n", SV_ARG(basename));
-    }
-}
+#include <vane/diagnostic/report_collector.h>
 
 int main(int argc, const char **argv) {
     BuildOptions build_options = { 0 };
@@ -99,8 +14,7 @@ int main(int argc, const char **argv) {
         return 1;
     }
 
-    if (build_options.command == BUILD_COMMAND_HELP ||
-        build_options.command == BUILD_COMMAND_MISSING) {
+    if (build_options.command == BUILD_COMMAND_HELP) {
         print_usage(argv[0]);
         build_options_destroy(&build_options);
         return 0;
@@ -108,70 +22,32 @@ int main(int argc, const char **argv) {
 
     Compiler compiler = compiler_create(&build_options);
 
-    // Load root package
+    // Discover & parse
     Package* root_package = compiler_discover_packages(&compiler, string_get_view(build_options.root_path));
-    report_collector_print_all(&compiler.rc);
-
     if (root_package == NULL) {
+        report_collector_print_all(&compiler.rc, build_options.with_color);
         compiler_destroy(&compiler);
         build_options_destroy(&build_options);
         return 1;
     }
 
-    HashmapIterator source_file_it = hashmap_get_it(&compiler.source_files);
-    StringView source_file_path = STRING_VIEW_EMPTY;
+    compiler_parse_source_files(&compiler);
 
-    while (hashmap_it_next(&source_file_it, &source_file_path, NULL)) {
-        StringView basename = path_get_basename(source_file_path);
-        printf("filepath: %.*s\n", SV_ARG(basename));
-
-        String content = STRING_EMPTY;
-        FileLoadStatus status = file_content_load(source_file_path, (u8**)&content.data, &content.len);
-        if (status != FILE_LOAD_OK) {
-            continue;
-        }
-
-        TokenStream ts = token_stream_create(0, source_file_path, string_get_view(content), &compiler.rc);
-
-        while (!ts.done) {
-            const Token* token = token_stream_advance(&ts);
-
-            printf("[%3d:%3d:%3d:%3d] [%10s][",
-                token->loc.begin.line, token->loc.begin.column,
-                token->loc.end.line, token->loc.end.column,
-                token_kind_get_name(token->kind)
-            );
-
-            if (IS_FLAG_SET(token->flags, TOKEN_FLAG_FIRST_IN_LINE)) {
-                printf(" FIRST");
-            } else { printf("      "); }
-            if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_LEADING_WS)) {
-                printf(" | LEAD_WS");
-            } else { printf(" |        "); }
-            if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_LEADING_LBR)) {
-                printf(" | LEAD_LBR");
-            } else { printf(" |         "); }
-            if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_TRAILING_WS)) {
-                printf(" | TRAIL_WS");
-            } else { printf(" |         "); }
-            if (IS_FLAG_SET(token->flags, TOKEN_FLAG_HAS_TRAILING_LBR)) {
-                printf(" | TRAIL_LBR ");
-            } else { printf(" |           "); }
-
-            printf("] - %.*s\n", SV_ARG(token->value));
-        }
-
-        token_stream_destroy(&ts);
-        string_destroy(&content);
+    if (build_options.dump_ast) {
+        compiler_dump_ast(&compiler);
+    }
+    if (build_options.dump_ast_dot) {
+        compiler_dump_ast_dot(&compiler);
     }
 
-    report_collector_print_all(&compiler.rc);
+    report_collector_print_all(&compiler.rc, build_options.with_color);
 
-    print_build_options(&build_options);
-    print_compiler_info(&compiler);
+    int exit_code =
+        (compiler.rc.sev_count[DIAG_SEV_ERROR] > 0) ||
+        (build_options.werror && compiler.rc.sev_count[DIAG_SEV_WARNING] > 0);
 
     compiler_destroy(&compiler);
     build_options_destroy(&build_options);
 
-    return 0;
+    return exit_code;
 }

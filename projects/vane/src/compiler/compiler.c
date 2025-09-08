@@ -1,7 +1,11 @@
 #include "vane/compiler/compiler.h"
 
+#include <stdio.h>
+
 #include "vane/utils/path.h"
 #include "vane/utils/terminal.h"
+
+#include "vane/ast/ast_visitor/ast_dot_visitor.h"
 
 Compiler compiler_create(BuildOptions* build_options) {
     assert(build_options != NULL);
@@ -21,7 +25,7 @@ Compiler compiler_create(BuildOptions* build_options) {
 
     compiler.entry_point = NULL;
 
-    compiler.rc = report_collector_create(build_options->log_verbosity, is_terminal_support_colors());
+    compiler.rc = report_collector_create(build_options->log_verbosity);
 
     return compiler;
 }
@@ -113,9 +117,6 @@ Package* compiler_discover_packages(Compiler* compiler, StringView path) {
             // Lazily create package for this directory if needed
             if (package == NULL) {
                 package = package_create(abs_path_sv);
-
-                hashmap_insert(&compiler->packages, &abs_path, &package);
-                REPORT_INFO(&compiler->rc, "driver", "registered package '" SV_FMT"'.", SV_ARG(package_name));
             }
 
             vector_push_back(&package->subpackages, &subpackage);
@@ -127,12 +128,13 @@ Package* compiler_discover_packages(Compiler* compiler, StringView path) {
         else {
             if (package == NULL) {
                 package = package_create(abs_path_sv);
-
-                hashmap_insert(&compiler->packages, &abs_path, &package);
-                REPORT_INFO(&compiler->rc, "driver", "registered package '" SV_FMT"'.", SV_ARG(package_name));
             }
 
-            hashmap_insert(&compiler->source_files, &entry->fullpath, NULL);
+            SourceFile* source_file = source_file_create(string_get_view(entry->fullpath), &compiler->rc);
+            hashmap_insert(&compiler->source_files, &entry->fullpath, &source_file);
+            vector_push_back(&package->source_files, &source_file);
+            source_file->package = package;
+
             REPORT_INFO(&compiler->rc, "driver", "added source file '" SV_FMT"'.", SV_ARG(basename));
 
             // Clear entry path since ownership transferred
@@ -142,5 +144,95 @@ Package* compiler_discover_packages(Compiler* compiler, StringView path) {
 
     vector_destroy(&entries);
 
+    if (package != NULL) {
+        hashmap_insert(&compiler->packages, &abs_path, &package);
+        REPORT_INFO(&compiler->rc, "driver", "registered package '" SV_FMT"'.", SV_ARG(package_name));
+    }
+
     return package;
+}
+
+bool compiler_parse_source_files(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    bool is_ok = true;
+
+    HashmapIterator source_file_it = hashmap_get_it(&compiler->source_files);
+    SourceFile* source_file = NULL;
+    while (hashmap_it_next(&source_file_it, NULL, &source_file)) {
+        if (!source_file_parse_ast(source_file)) {
+            is_ok = false;
+        }
+    }
+
+    return is_ok;
+}
+
+typedef struct { u32 indent; } DumpAstTextCtx;
+
+static void dump_ast_text_pre(ASTNode* parent, ASTNode* node, void* data) {
+    (void)parent;
+
+    DumpAstTextCtx* ctx = (DumpAstTextCtx*)data;
+    for (u32 k = 0; k < ctx->indent; ++k) {
+        printf("  ");
+    }
+
+    printf("%s [%d:%d-%d:%d]\n",
+        ast_node_kind_get_name(node->kind),
+        node->loc.begin.line, node->loc.begin.column,
+        node->loc.end.line, node->loc.end.column
+    );
+    ctx->indent++;
+}
+
+static void dump_ast_text_post(ASTNode* parent, ASTNode* node, void* data) {
+    (void)parent;
+    (void)node;
+
+    DumpAstTextCtx* ctx = (DumpAstTextCtx*)data;
+    if (ctx->indent) {
+        ctx->indent--;
+    }
+}
+
+void compiler_dump_ast(const Compiler* compiler) {
+    assert(compiler != NULL);
+
+    HashmapIterator package_it = hashmap_get_it(&compiler->packages);
+    Package* package = NULL;
+
+    while (hashmap_it_next(&package_it, NULL, &package)) {
+        if (package == NULL) continue;
+
+        for (u32 i = 0; i < package->source_files.size; ++i) {
+            const SourceFile* sf = vector_at(package->source_files, i);
+            printf("[ast: " SV_FMT "]\n", SV_ARG(sf->path));
+
+            DumpAstTextCtx ctx = { 0 };
+            ASTVisitor v = {
+                .pre_fn = &dump_ast_text_pre,
+                .post_fn = &dump_ast_text_post,
+                .data = &ctx,
+            };
+            ast_visit_with(NULL, sf->ast, &v);
+        }
+    }
+}
+
+void compiler_dump_ast_dot(const Compiler* compiler) {
+    assert(compiler != NULL);
+
+    HashmapIterator package_it = hashmap_get_it(&compiler->packages);
+    Package* package = NULL;
+
+    while (hashmap_it_next(&package_it, NULL, &package)) {
+        if (package == NULL) continue;
+
+        for (u32 i = 0; i < package->source_files.size; ++i) {
+            const SourceFile* sf = vector_at(package->source_files, i);
+            printf("[file: " SV_FMT "]\n", SV_ARG(sf->path));
+            ast_print_dot(sf->ast, stdout);
+        }
+    }
 }

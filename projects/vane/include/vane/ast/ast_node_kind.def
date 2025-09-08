@@ -1,0 +1,395 @@
+/*..............................START OF DEFINES..............................*/
+
+#ifndef AST_NODE
+#define AST_NODE(KIND, NAME, STRUCT, DESTROY, VISIT)
+#endif
+
+#ifndef AST_NODE_GROUP
+#define AST_NODE_GROUP(KIND, NAME) AST_NODE(GROUP_##KIND, NAME, /* STRUCT */, /* DESTROY */, /* VISIT */)
+#endif
+
+#ifndef AST_NODE_VISIT_CHILD_FN
+#define AST_NODE_VISIT_CHILD_FN(...)
+#endif
+
+/*..............................GROUP.........................................*/
+
+AST_NODE_GROUP(MISC, "misc")
+AST_NODE_GROUP(PACKAGE_ENTITY, "package:entity")
+AST_NODE_GROUP(TYPEREF, "typeref")
+AST_NODE_GROUP(STMT, "stmt")
+AST_NODE_GROUP(EXPR, "expr")
+AST_NODE_GROUP(EXPR_NUD, "expr:nud")
+AST_NODE_GROUP(EXPR_LED, "expr:led")
+
+/*..............................MISC..........................................*/
+
+#ifndef AST_NODE_MISC
+#define AST_NODE_MISC(KIND, NAME, STRUCT, DESTROY, VISIT) AST_NODE(KIND, NAME, STRUCT, DESTROY, VISIT)
+#endif
+
+AST_NODE_MISC(UNKNOWN, "unknown", /* STRUCT */, /* DESTROY */, /* VISIT */)
+
+AST_NODE_MISC(ERROR,   "error", struct {
+    ASTNodeKind failed;
+    ASTNode* prev;
+} error;,
+    ast_node_destroy(node->as.error.prev);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.error.prev)
+)
+
+AST_NODE_MISC(IDENTIFIER, "identifier", struct {
+    String value;
+} id;,
+    string_destroy(&node->as.id.value);,
+    /* VISIT */
+)
+
+AST_NODE_MISC(SOURCE_FILE, "source_file", struct {
+    Vector entities;
+} source_file;,
+    vector_destroy(&node->as.source_file.entities);,
+
+    for (u32 i = 0; i < node->as.source_file.entities.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.source_file.entities, i));
+    }
+)
+
+AST_NODE_MISC(IMPORT_DECL, "import:decl", struct {
+    ASTNode* path;
+    ASTNode* alias;
+} import_decl;,
+    ast_node_destroy(node->as.import_decl.path);
+    ast_node_destroy(node->as.import_decl.alias);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.import_decl.path);
+    AST_NODE_VISIT_CHILD_FN(node->as.import_decl.alias);
+)
+
+AST_NODE_MISC(FUN_PARAM, "fun:param", struct {
+    ASTNode* id;
+    ASTNode* typeref;
+} fun_param;,
+    ast_node_destroy(node->as.fun_param.id);
+    ast_node_destroy(node->as.fun_param.typeref);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.fun_param.id);
+    AST_NODE_VISIT_CHILD_FN(node->as.fun_param.typeref);
+)
+
+AST_NODE_MISC(FUN_SIGN, "fun:sign", struct {
+    ASTNode* id;
+    Vector params;
+    ASTNode* typeref;
+} fun_sign;,
+    ast_node_destroy(node->as.fun_sign.id);
+    vector_destroy(&node->as.fun_sign.params);
+    ast_node_destroy(node->as.fun_sign.typeref);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.fun_sign.id);
+    AST_NODE_VISIT_CHILD_FN(node->as.fun_sign.typeref);
+    for (u32 i = 0; i < node->as.fun_sign.params.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.fun_sign.params, i));
+    }
+)
+
+AST_NODE_MISC(FUN_DECL, "fun:decl", struct {
+    ASTNode* sign;
+    Vector block;
+} fun_decl;,
+    ast_node_destroy(node->as.fun_decl.sign);
+    vector_destroy(&node->as.fun_decl.block);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.fun_decl.sign);
+    for (u32 i = 0; i < node->as.fun_decl.block.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.fun_decl.block, i));
+    }
+)
+
+/*..............................TYPEREF..........................................*/
+
+#ifndef AST_NODE_TYPEREF
+#define AST_NODE_TYPEREF(KIND, NAME, STRUCT, DESTROY, VISIT) AST_NODE(TYPEREF_##KIND, "typeref:"NAME, STRUCT, DESTROY, VISIT)
+#endif
+
+AST_NODE_TYPEREF(BUILTIN, "builtin", struct {
+    TokenKind kind;
+} typeref_builtin;, /* DESTROY */, /* VISIT */)
+
+AST_NODE_TYPEREF(CUSTOM, "custom", struct {
+    String value;
+} typeref_custom;,
+    string_destroy(&node->as.typeref_custom.value);,
+    /* VISIT */
+)
+
+AST_NODE_TYPEREF(PTR, "ptr", struct {
+    ASTNode* typeref;
+} typeref_ptr;,
+    ast_node_destroy(node->as.typeref_ptr.typeref);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.typeref_ptr.typeref);
+)
+
+AST_NODE_TYPEREF(ARR, "arr", struct {
+    ASTNode* size_expr;
+    ASTNode* typeref;
+} typeref_arr;,
+    ast_node_destroy(node->as.typeref_arr.size_expr);
+    ast_node_destroy(node->as.typeref_arr.typeref);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.typeref_arr.size_expr);
+    AST_NODE_VISIT_CHILD_FN(node->as.typeref_arr.typeref);
+)
+
+AST_NODE_TYPEREF(FUN_PARAM, "fun:param", struct {
+    ASTNode* id;
+    ASTNode* typeref;
+} typeref_fun_param;,
+    ast_node_destroy(node->as.typeref_fun_param.id);
+    ast_node_destroy(node->as.typeref_fun_param.typeref);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.typeref_fun_param.id);
+    AST_NODE_VISIT_CHILD_FN(node->as.typeref_fun_param.typeref);
+)
+
+AST_NODE_TYPEREF(FUN, "fun", struct {
+    Vector params;
+    ASTNode* typeref;
+} typeref_fun;,
+    vector_destroy(&node->as.typeref_fun.params);
+    ast_node_destroy(node->as.typeref_fun.typeref);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.typeref_fun.typeref);
+
+    for (u32 i = 0; i < node->as.typeref_fun.params.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.typeref_fun.params, i));
+    }
+)
+
+/*..............................STMT..........................................*/
+
+#ifndef AST_NODE_STMT
+#define AST_NODE_STMT(KIND, NAME, STRUCT, DESTROY, VISIT) AST_NODE(STMT_##KIND, "stmt:"NAME, STRUCT, DESTROY, VISIT)
+#endif
+
+AST_NODE_STMT(EMPTY, "empty", /* STRUCT */, /* DESTROY */, /* VISIT */)
+
+AST_NODE_STMT(TYPEALIAS_DECL, "typealias:decl", struct {
+    ASTNode* id;
+    ASTNode* typeref;
+} stmt_typealias_decl;,
+    ast_node_destroy(node->as.stmt_typealias_decl.id);
+    ast_node_destroy(node->as.stmt_typealias_decl.typeref);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.stmt_typealias_decl.id);
+    AST_NODE_VISIT_CHILD_FN(node->as.stmt_typealias_decl.typeref);
+)
+
+AST_NODE_STMT(BLOCK, "block", struct {
+    Vector block;
+} stmt_block;,
+    vector_destroy(&node->as.stmt_block.block);,
+
+    for (u32 i = 0; i < node->as.stmt_block.block.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.stmt_block.block, i));
+    }
+)
+
+AST_NODE_STMT(VAR_ITEM, "var:item", struct {
+    ASTNode* id;
+    ASTNode* typeref;
+    ASTNode* expr;
+} stmt_var_item;,
+    ast_node_destroy(node->as.stmt_var_item.id);
+    ast_node_destroy(node->as.stmt_var_item.typeref);
+    ast_node_destroy(node->as.stmt_var_item.expr);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.stmt_var_item.id);
+    AST_NODE_VISIT_CHILD_FN(node->as.stmt_var_item.typeref);
+    AST_NODE_VISIT_CHILD_FN(node->as.stmt_var_item.expr);
+)
+
+AST_NODE_STMT(VAR_DECL, "var:decl", struct {
+    Vector items;
+} stmt_var_decl;,
+    vector_destroy(&node->as.stmt_var_decl.items);,
+
+    for (u32 i = 0; i < node->as.stmt_var_decl.items.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.stmt_var_decl.items, i));
+    }
+)
+
+AST_NODE_STMT(BRANCH, "branch", struct {
+    ASTNode* expr;
+    Vector block;
+} stmt_branch;,
+    ast_node_destroy(node->as.stmt_branch.expr);
+    vector_destroy(&node->as.stmt_branch.block);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.stmt_branch.expr);
+    for (u32 i = 0; i < node->as.stmt_branch.block.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.stmt_branch.block, i));
+    }
+)
+
+AST_NODE_STMT(CONDITION, "condition", struct {
+    Vector branches;
+} stmt_condition;,
+    vector_destroy(&node->as.stmt_condition.branches);,
+
+    for (u32 i = 0; i < node->as.stmt_condition.branches.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.stmt_condition.branches, i));
+    }
+)
+
+AST_NODE_STMT(WHILE, "while", struct {
+    ASTNode* expr;
+    Vector block;
+} stmt_while;,
+    ast_node_destroy(node->as.stmt_while.expr);
+    vector_destroy(&node->as.stmt_while.block);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.stmt_while.expr);
+    for (u32 i = 0; i < node->as.stmt_while.block.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.stmt_while.block, i));
+    }
+)
+
+AST_NODE_STMT(DO, "do", struct {
+    ASTNode* expr;
+    Vector block;
+} stmt_do;,
+    ast_node_destroy(node->as.stmt_do.expr);
+    vector_destroy(&node->as.stmt_do.block);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.stmt_do.expr);
+    for (u32 i = 0; i < node->as.stmt_do.block.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.stmt_do.block, i));
+    }
+)
+
+AST_NODE_STMT(BREAK, "break", /* STRUCT */, /* DESTROY */, /* VISIT */)
+
+AST_NODE_STMT(CONTINUE, "continue", /* STRUCT */, /* DESTROY */, /* VISIT */)
+
+AST_NODE_STMT(RETURN, "return", struct {
+    ASTNode* expr;
+} stmt_return;,
+    ast_node_destroy(node->as.stmt_return.expr);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.stmt_return.expr);
+)
+
+AST_NODE_STMT(EXPR, "expr", struct {
+    ASTNode* expr;
+} stmt_expr;,
+    ast_node_destroy(node->as.stmt_expr.expr);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.stmt_expr.expr);
+)
+
+/*..............................EXPR..........................................*/
+
+#ifndef AST_NODE_EXPR
+#define AST_NODE_EXPR(KIND, NAME, STRUCT, DESTROY, VISIT) AST_NODE(EXPR_##KIND, "expr:"NAME, STRUCT, DESTROY, VISIT)
+#endif
+
+
+AST_NODE_EXPR(BINARY, "binary", struct {
+    TokenKind op;
+    ASTNode* lhs;
+    ASTNode* rhs;
+} expr_binary;,
+    ast_node_destroy(node->as.expr_binary.lhs);
+    ast_node_destroy(node->as.expr_binary.rhs);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.expr_binary.lhs);
+    AST_NODE_VISIT_CHILD_FN(node->as.expr_binary.rhs);
+)
+
+AST_NODE_EXPR(PREFIX_UNARY, "unary:prefix", struct {
+    TokenKind op;
+    ASTNode* rhs;
+} expr_prefix_unary;,
+    ast_node_destroy(node->as.expr_prefix_unary.rhs);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.expr_prefix_unary.rhs);
+)
+
+AST_NODE_EXPR(POSTFIX_UNARY, "unary:postfix", struct {
+    TokenKind op;
+    ASTNode* lhs;
+} expr_postfix_unary;,
+    ast_node_destroy(node->as.expr_postfix_unary.lhs);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.expr_postfix_unary.lhs);
+)
+
+AST_NODE_EXPR(BRACES, "braces", struct {
+    ASTNode* expr;
+} expr_braces;,
+    ast_node_destroy(node->as.expr_braces.expr);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.expr_braces.expr);
+)
+
+AST_NODE_EXPR(PLACE, "place", struct {
+    String value;
+} expr_place;,
+    string_destroy(&node->as.expr_place.value);,
+    /* VISIT */
+)
+
+AST_NODE_EXPR(CALL, "call", struct {
+    ASTNode* callee;
+    Vector args;
+} expr_call;,
+    ast_node_destroy(node->as.expr_call.callee);
+    vector_destroy(&node->as.expr_call.args);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.expr_call.callee);
+    for (u32 i = 0; i < node->as.expr_call.args.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.expr_call.args, i));
+    }
+)
+
+AST_NODE_EXPR(INDEX, "index", struct {
+    ASTNode* callee;
+    ASTNode* index;
+} expr_index;,
+    ast_node_destroy(node->as.expr_index.callee);
+    ast_node_destroy(node->as.expr_index.index);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.expr_index.callee);
+    AST_NODE_VISIT_CHILD_FN(node->as.expr_index.index);
+)
+
+AST_NODE_EXPR(MEMBER, "member", struct {
+    ASTNode* object;
+    ASTNode* member;
+} expr_member;,
+    ast_node_destroy(node->as.expr_member.object);
+    ast_node_destroy(node->as.expr_member.member);,
+
+    AST_NODE_VISIT_CHILD_FN(node->as.expr_member.object);
+    AST_NODE_VISIT_CHILD_FN(node->as.expr_member.member);
+)
+
+AST_NODE_EXPR(LITERAL, "literal", struct {
+    TokenKind kind;
+    String value;
+} expr_literal;,
+    string_destroy(&node->as.expr_literal.value);,
+    /* VISIT */
+)
+
+/*..............................END OF DEFINES................................*/
+
+#undef AST_NODE
+#undef AST_NODE_VISIT_CHILD_FN
+#undef AST_NODE_MISC
+#undef AST_NODE_TYPEREF
+#undef AST_NODE_STMT
+#undef AST_NODE_EXPR
