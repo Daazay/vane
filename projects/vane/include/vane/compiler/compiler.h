@@ -7,6 +7,8 @@
 #include "vane/compiler/build_options.h"
 #include "vane/compiler/package.h"
 
+#include "vane/diagnostic/report_collector.h"
+
 typedef struct Compiler Compiler;
 
 #define VANE_LANG_EXT                           ".vn"
@@ -26,6 +28,8 @@ struct Compiler {
     Hashmap source_files;
 
     Package* entry_point;
+
+    ReportCollector rc;
 };
 
 Compiler compiler_create(BuildOptions* build_options);

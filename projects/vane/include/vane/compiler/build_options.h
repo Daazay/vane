@@ -5,6 +5,8 @@
 #include "vane/utils/vector.h"
 #include "vane/utils/hashmap.h"
 
+#include "vane/diagnostic/diagnostic.h"
+
 typedef enum BuildCommand BuildCommand;
 typedef struct BuildOptions BuildOptions;
 
@@ -27,7 +29,8 @@ struct BuildOptions {
 
     String root_path;
     String output_dir;
-    u32 jobs;
+
+    DiagnosticSeverity log_verbosity;
 };
 
 void print_usage(const char* argv0);

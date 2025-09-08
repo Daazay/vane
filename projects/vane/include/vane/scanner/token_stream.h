@@ -6,6 +6,8 @@
 #include "vane/scanner/token_kind.h"
 #include "vane/scanner/scanner.h"
 
+#include "vane/diagnostic/report_collector.h"
+
 typedef struct TokenStream TokenStream;
 
 #define TOKEN_STREAM_DEFAULT_CAPACITY 5120
@@ -18,7 +20,7 @@ struct TokenStream {
     bool done;
 };
 
-TokenStream token_stream_create(u32 init_cap, StringView path, StringView content);
+TokenStream token_stream_create(u32 init_cap, StringView path, StringView content, ReportCollector* rc);
 
 void token_stream_destroy(TokenStream* ts);
 

@@ -7,55 +7,45 @@ static inline void scanner_advance_rune(Scanner* scanner) {
         return;
     }
 
-    // Handle newlines
-    // Handle LF
+    // Track line/column
+    // LF: incremnt line, reset column
     if (scanner->curr_rune == (Rune)'\n') {
         scanner->loc.end.line++;
         scanner->loc.end.column = SCANNER_DEFAULT_COLUMN_POS;
 
-        // Set flags for next token
         SET_FLAG(scanner->flags, TOKEN_FLAG_FIRST_IN_LINE);
         SET_FLAG(scanner->flags, TOKEN_FLAG_HAS_LEADING_LBR);
     }
-    // Handle CRLF
+    // CR: increment line, reset column
     else if (scanner->curr_rune == (Rune)'\r') {
+        scanner->loc.end.line++;
+        scanner->loc.end.column = SCANNER_DEFAULT_COLUMN_POS;
+
+        SET_FLAG(scanner->flags, TOKEN_FLAG_FIRST_IN_LINE);
+        SET_FLAG(scanner->flags, TOKEN_FLAG_HAS_LEADING_LBR);
+
+        // Lookahead for CRLF
         u64 next_pos = scanner->pos + scanner->curr_rune_len;
         if (next_pos < scanner->content.len) {
             u32 next_len = 0;
             Rune next_rune = string_view_rune_at_byte(scanner->content, next_pos, &next_len);
 
-            // Skip LF after CR
+            // Skip LF in CRLF sequence
             if (next_rune == (Rune)'\n') {
-                scanner->pos = next_pos + next_len;
-                if (scanner->pos < scanner->content.len) {
-                    scanner->curr_rune = string_view_rune_at_byte(scanner->content, scanner->pos, &scanner->curr_rune_len);
-                }
-                else {
-                    scanner->curr_rune = (Rune)RUNE_EOF;
-                    scanner->curr_rune_len = 0;
-                }
-
-                scanner->loc.end.line++;
-                scanner->loc.end.column = SCANNER_DEFAULT_COLUMN_POS;
-
-                // Set flags for next token
-                SET_FLAG(scanner->flags, TOKEN_FLAG_FIRST_IN_LINE);
-                SET_FLAG(scanner->flags, TOKEN_FLAG_HAS_LEADING_LBR);
-                return;
+                scanner->pos = next_pos;
+                scanner->curr_rune_len = next_len;
             }
         }
-
-        // Treat lone CR as normal char
-        scanner->loc.end.column++;
     }
+    // Normal rune: increment column
     else {
-        // Normal char
         scanner->loc.end.column++;
     }
 
     // Advance position
     scanner->pos += scanner->curr_rune_len;
 
+    // Update current rune
     if (scanner->pos >= scanner->content.len) {
         scanner->curr_rune = (Rune)RUNE_EOF;
         scanner->curr_rune_len = 0;
@@ -121,53 +111,66 @@ static inline void scanner_skip_comment_line(Scanner* scanner) {
     }
 }
 
-static inline bool scanner_skip_comment_block(Scanner* scanner) {
-    Rune prev_r = RUNE_EOF;
-
-    i32 nesting_level = 1;
-
-    while (nesting_level > 0 && scanner->curr_rune != RUNE_EOF) {
-        // nested comment block
-        if (prev_r == (Rune)'/' && scanner->curr_rune == (Rune)'*') {
-            nesting_level++;
-            prev_r = RUNE_EOF;
-            scanner_advance_rune(scanner);
-        }
-        else if (prev_r == (Rune)'*' && scanner->curr_rune == (Rune)'/') {
-            nesting_level--;
-            prev_r = RUNE_EOF;
-            scanner_advance_rune(scanner);
-        }
-        else {
-            prev_r = scanner->curr_rune;
-            scanner_advance_rune(scanner);
-        }
+static inline bool scanner_skip_comment_block(Scanner* scanner, u32 nesting_level) {
+    if (nesting_level > SCANNER_MAX_COMMENT_BLOCK_NESTING_LEVEL) {
+        REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc,
+            "comment block nesting exceeds maximum level (%u)",
+            SCANNER_MAX_COMMENT_BLOCK_NESTING_LEVEL
+        );
+        return false;
     }
 
-    return nesting_level == 0;
+    Rune prev_r = RUNE_EOF;
+    bool good = true;
+
+    while (scanner->curr_rune != RUNE_EOF) {
+        // nested comment block
+        if (prev_r == (Rune)'/' && scanner->curr_rune == (Rune)'*') {
+            scanner_advance_rune(scanner);
+            if (!scanner_skip_comment_block(scanner, nesting_level + 1)) {
+                good = false;
+                break;
+            }
+            continue;
+        }
+        else if (prev_r == (Rune)'*' && scanner->curr_rune == (Rune)'/') {
+            scanner_advance_rune(scanner);
+            break;
+        }
+        prev_r = scanner->curr_rune;
+        scanner_advance_rune(scanner);
+    }
+
+    if (scanner->curr_rune == RUNE_EOF && good) {
+        REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc, "unterminated block comment");
+        good = false;
+    }
+
+    return good;
 }
+
+#include <stdio.h>
 
 static inline Token scanner_parse_string_literal(Scanner* scanner) {
     Rune prev_r = RUNE_EOF;
-
     u64 prev_pos = scanner->pos;
-    bool good = false;
+    bool terminated = false;
 
     while (scanner->curr_rune != RUNE_EOF) {
         if (prev_r != (Rune)'\\' && scanner->curr_rune == (Rune)'\"') {
-            good = true;
+            terminated = true;
             scanner_advance_rune(scanner);
             break;
         }
         else if (is_vspace_rune(scanner->curr_rune)) {
-            good = false;
             break;
         }
-        scanner_advance_rune(scanner);
         prev_r = scanner->curr_rune;
+        scanner_advance_rune(scanner);
     }
 
-    if (!good) {
+    if (!terminated) {
+        REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc, "unterminated string literal");
         RETURN_TOKEN(TOKEN_INVALID, STRING_VIEW_EMPTY);
     }
 
@@ -177,41 +180,40 @@ static inline Token scanner_parse_string_literal(Scanner* scanner) {
 
 static inline Token scanner_parse_char_literal(Scanner* scanner) {
     Rune prev_r = RUNE_EOF;
-
     u64 prev_pos = scanner->pos;
     u64 rune_count = 0;
-    bool good = false;
 
     while (scanner->curr_rune != RUNE_EOF) {
         rune_count++;
-
         if (prev_r != (Rune)'\\' && scanner->curr_rune == (Rune)'\'') {
-            good = true;
-            scanner_advance_rune(scanner);
             break;
         }
         else if (is_vspace_rune(scanner->curr_rune)) {
-            good = false;
+            REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc, "char literal must not contain newline");
             break;
         }
-        scanner_advance_rune(scanner);
         prev_r = scanner->curr_rune;
+        scanner_advance_rune(scanner);
     }
 
-    if (!good) {
+    // Check termination
+    if (scanner->curr_rune != '\'') {
+        REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc, "unterminated char literal");
         RETURN_TOKEN(TOKEN_INVALID, STRING_VIEW_EMPTY);
     }
 
-    if (prev_r == (Rune)'\\') {
-        // backslash + escaped char
+    scanner_advance_rune(scanner);
+
+    if (prev_r == '\\') {
         if (rune_count != 2) {
+            REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc,
+                             "escaped char literal must contain exactly one character");
             RETURN_TOKEN(TOKEN_INVALID, STRING_VIEW_EMPTY);
         }
-    }
-    else {
-        if (rune_count != 1) {
-            RETURN_TOKEN(TOKEN_INVALID, STRING_VIEW_EMPTY);
-        }
+    } else if (rune_count != 1) {
+        REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc,
+                         "char literal must contain exactly one character");
+        RETURN_TOKEN(TOKEN_INVALID, STRING_VIEW_EMPTY);
     }
 
     StringView value = string_view_subview(scanner->content, prev_pos, scanner->pos - prev_pos - 1);
@@ -220,9 +222,9 @@ static inline Token scanner_parse_char_literal(Scanner* scanner) {
 
 static inline Token scanner_parse_prefixed_number_literal(Scanner* scanner, TokenKind kind, bool (*is_valid_rune_fn)(Rune r)) {
     Rune prev_r = RUNE_EOF;
-
     u64 prev_pos = scanner->pos;
-    bool good = false;
+    bool valid = true;
+    bool saw_digit = false;
 
     while (scanner->curr_rune != RUNE_EOF) {
         if (is_space_rune(scanner->curr_rune) ||
@@ -231,21 +233,28 @@ static inline Token scanner_parse_prefixed_number_literal(Scanner* scanner, Toke
         }
         else if (scanner->curr_rune == (Rune)'_') {
             if (prev_r == (Rune)'_') {
-                good = false;
+                REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc,
+                    "numeric literal cannot contain consecutive underscores");
+                valid = false;
             }
         }
         else if (!is_valid_rune_fn(scanner->curr_rune)) {
-            good = false;
+            REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc,
+                "invalid character '%c' in numeric literal", (char)scanner->curr_rune);
+            valid = false;
+        } else {
+            saw_digit = true;
         }
 
         scanner_advance_rune(scanner);
         prev_r = scanner->curr_rune;
     }
 
-    if (scanner->pos == prev_pos) {
+    if (!saw_digit) {
+        REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc, "numeric literal requires at least one digit");
         RETURN_TOKEN(TOKEN_INVALID, STRING_VIEW_EMPTY);
     }
-    else if (!good || prev_r == (Rune)'_') {
+    if (!valid || prev_r == '_') {
         RETURN_TOKEN(TOKEN_INVALID, STRING_VIEW_EMPTY);
     }
 
@@ -253,11 +262,8 @@ static inline Token scanner_parse_prefixed_number_literal(Scanner* scanner, Toke
     RETURN_TOKEN(kind, value);
 }
 
-static inline Token scanner_parse_dec_literal(Scanner* scanner) {
-    Rune prev_r = RUNE_EOF;
-
-    bool good = true;
-    const u64 prev_pos = scanner->pos - 1;
+static inline Token scanner_parse_dec_literal(Scanner* scanner, Rune prev_r, u64 prev_pos) {
+    bool valid = true;
 
     while (scanner->curr_rune != RUNE_EOF) {
         if (is_space_rune(scanner->curr_rune) ||
@@ -266,17 +272,21 @@ static inline Token scanner_parse_dec_literal(Scanner* scanner) {
         }
         else if (scanner->curr_rune == (Rune)'_') {
             if (prev_r == (Rune)'_') {
-                good = false;
+                REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc,
+                    "decimal literal cannot contain consecutive underscores");
+                valid = false;
             }
         }
         else if (!is_digit_rune(scanner->curr_rune)) {
-            good = false;
+            REPORT_ERROR_LOC(scanner->rc, "scanner", scanner->loc,
+                "invalid character '%c' in decimal literal", (char)scanner->curr_rune);
+            valid = false;
         }
         scanner_advance_rune(scanner);
         prev_r = scanner->curr_rune;
     }
 
-    if (!good || prev_r == (Rune)'_') {
+    if (!valid || prev_r == '_') {
         RETURN_TOKEN(TOKEN_INVALID, STRING_VIEW_EMPTY);
     }
 
@@ -285,30 +295,31 @@ static inline Token scanner_parse_dec_literal(Scanner* scanner) {
 }
 
 static inline Token scanner_parse_number_literal(Scanner* scanner) {
-    Rune curr_r = scanner->curr_rune;
+    Rune prev_r = scanner->curr_rune;
+    u64 prev_pos = scanner->pos;
+
     scanner_advance_rune(scanner);
 
-    if (curr_r == '0') {
-        curr_r = scanner->curr_rune;
+    if (prev_r == '0') {
 
         // HEX LITERAL
-        if (curr_r == (Rune)'x' || curr_r == (Rune)'X') {
+        if (scanner->curr_rune == (Rune)'x' || scanner->curr_rune == (Rune)'X') {
             scanner_advance_rune(scanner);
             return scanner_parse_prefixed_number_literal(scanner, TOKEN_LITERAL_HEX, &is_xdigit_rune);
         }
         // OCT LITERAL
-        if (curr_r == (Rune)'o' || curr_r == (Rune)'O') {
+        if (scanner->curr_rune == (Rune)'o' || scanner->curr_rune == (Rune)'O') {
             scanner_advance_rune(scanner);
             return scanner_parse_prefixed_number_literal(scanner, TOKEN_LITERAL_OCT, &is_odigit_rune);
         }
         // BIN LITERAL
-        if (curr_r == (Rune)'b' || curr_r == (Rune)'B') {
+        if (scanner->curr_rune == (Rune)'b' || scanner->curr_rune == (Rune)'B') {
             scanner_advance_rune(scanner);
             return scanner_parse_prefixed_number_literal(scanner, TOKEN_LITERAL_BIN, &is_bdigit_rune);
         }
     }
 
-    return scanner_parse_dec_literal(scanner);
+    return scanner_parse_dec_literal(scanner, prev_r, prev_pos);
 }
 
 static inline u32 keyword_hash_runes(StringView value) {
@@ -389,15 +400,17 @@ static inline Token scanner_parse_identifier_or_keyword(Scanner* scanner) {
     RETURN_TOKEN(kind, value);
 }
 
-Scanner scanner_create(StringView path, StringView content) {
+Scanner scanner_create(StringView path, StringView content, ReportCollector* rc) {
     Scanner scanner = {0};
+
+    scanner.rc = rc;
 
     scanner.content = content;
     scanner.pos = 0;
 
     scanner.loc.path = path;
-    scanner.loc.begin.line = SCANNER_DEFAULT_LINE_POS;
-    scanner.loc.begin.column = SCANNER_DEFAULT_COLUMN_POS;
+    scanner.loc.end.line = SCANNER_DEFAULT_LINE_POS;
+    scanner.loc.end.column = SCANNER_DEFAULT_COLUMN_POS;
 
     scanner.flags = TOKEN_FLAG_FIRST_IN_LINE;
 
@@ -496,7 +509,7 @@ Token scanner_scan_next(Scanner* scanner) {
             scanner_skip_comment_line(scanner);
             return scanner_scan_next(scanner);
         case '*':
-            if (!scanner_skip_comment_block(scanner)) {
+            if (!scanner_skip_comment_block(scanner, 1)) {
                 RETURN_TOKEN(TOKEN_INVALID, STRING_VIEW_EMPTY);
             }
             return scanner_scan_next(scanner);

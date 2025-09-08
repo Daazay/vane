@@ -24,13 +24,13 @@ static inline void token_stream_parse_window(TokenStream* ts, u32 window_size) {
 }
 
 
-TokenStream token_stream_create(u32 init_cap, StringView path, StringView content) {
+TokenStream token_stream_create(u32 init_cap, StringView path, StringView content, ReportCollector* rc) {
     u32 cap = (init_cap > 0)
         ? init_cap
         : TOKEN_STREAM_DEFAULT_CAPACITY;
 
     return (TokenStream) {
-        .scanner = scanner_create(path, content),
+        .scanner = scanner_create(path, content, rc),
         .tokens = vector_create(cap, VECTOR_SPECS(Token, NULL)),
         .idx = TOKEN_STREAM_BEGIN_IDX,
         .done = false,

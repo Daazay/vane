@@ -123,17 +123,21 @@ static bool handle_collection(ArgParser* parser, const char* value) {
     return true;
 }
 
-static bool handle_jobs(ArgParser* parser, const char* value) {
+static bool handle_verbosity(ArgParser* parser, const char* value) {
     if (value == NULL) {
-        eprintln("missing value for --jobs");
+        eprintln("missing value for --verbosity (expected a number)");
         return false;
     }
 
-    parser->options->jobs = (u32)atoi(value);
-    if (parser->options->jobs == 0) {
-        parser->options->jobs = 1;
+    char* endptr = NULL;
+    long v = strtol(value, &endptr, 10);
+
+    if (*endptr != '\0' || v < 0) {
+        eprintln("invalid verbosity level '%s' (must be non-negative integer)", value);
+        return false;
     }
 
+    parser->options->log_verbosity = (u32)v;
     return true;
 }
 
@@ -173,7 +177,7 @@ static bool handle_build(ArgParser* parser) {
 static OptionSpec general_options[] = {
     { "output_dir", 'o', true, &handle_output_dir, "Set output directory path (default: ./build)." },
     { "collection", 'c', true, &handle_collection, "Add collection in NAME=PATH format." },
-    { "jobs",       'j', true, &handle_jobs,       "Set number of parallel jobs (default: 1)." },
+    { "verbosity",  'v', true, &handle_verbosity,  "Set verbosity level (0=errors only, 1=warning, 2=info, 3=note, 4=debug)." },
     { "define",     'D', true, &handle_define,     "Add KEY=VALUE build definitions." },
 };
 
@@ -280,11 +284,12 @@ void build_options_init(BuildOptions* build_options) {
     );
 
     build_options->output_dir = string_from_cstr("./build");
-    build_options->jobs = 1;
     build_options->defines = hashmap_create(4,
         HASHMAP_KEY_SPECS(String, &string_view_item_hash, &string_view_item_eq, &string_destroy),
         HASHMAP_VALUE_SPECS(String, &string_destroy)
     );
+
+    build_options->log_verbosity = 0;
 }
 
 bool build_options_parse_args(BuildOptions* build_options, int argc, const char** argv) {

@@ -31,7 +31,6 @@ static void print_build_options(const BuildOptions* options) {
 
     printf("Root Path: %.*s\n", (int)options->root_path.len, options->root_path.data);
     printf("Output Directory: %.*s\n", (int)options->output_dir.len, options->output_dir.data);
-    printf("Jobs: %u\n", options->jobs);
 
     // Print collections
     if (options->collections.size > 0) {
@@ -111,8 +110,9 @@ int main(int argc, const char **argv) {
 
     // Load root package
     Package* root_package = compiler_discover_packages(&compiler, string_get_view(build_options.root_path));
+    report_collector_print_all(&compiler.rc);
+
     if (root_package == NULL) {
-        printf("failed to project from path: \"%.*s\"\n", (i32)build_options.root_path.len, build_options.root_path.data);
         compiler_destroy(&compiler);
         build_options_destroy(&build_options);
         return 1;
@@ -131,12 +131,16 @@ int main(int argc, const char **argv) {
             continue;
         }
 
-        TokenStream ts = token_stream_create(0, source_file_path, string_get_view(content));
+        TokenStream ts = token_stream_create(0, source_file_path, string_get_view(content), &compiler.rc);
 
         while (!ts.done) {
             const Token* token = token_stream_advance(&ts);
 
-            printf("  [%10s][", token_kind_get_name(token->kind));
+            printf("[%3d:%3d:%3d:%3d] [%10s][",
+                token->loc.begin.line, token->loc.begin.column,
+                token->loc.end.line, token->loc.end.column,
+                token_kind_get_name(token->kind)
+            );
 
             if (IS_FLAG_SET(token->flags, TOKEN_FLAG_FIRST_IN_LINE)) {
                 printf(" FIRST");
@@ -160,6 +164,8 @@ int main(int argc, const char **argv) {
         token_stream_destroy(&ts);
         string_destroy(&content);
     }
+
+    report_collector_print_all(&compiler.rc);
 
     print_build_options(&build_options);
     print_compiler_info(&compiler);

@@ -6,8 +6,6 @@
 #if defined(PLATFORM_WINDOWS)
 #include <Windows.h>
 #else
-#define _POSIX_C_SOURCE 200809L
-#define _XOPEN_SOURCE 700
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
