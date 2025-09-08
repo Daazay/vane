@@ -4,6 +4,7 @@
 
 #include "vane/utils/path.h"
 #include "vane/utils/terminal.h"
+#include "vane/utils/string_builder.h"
 
 #include "vane/ast/ast_visitor/ast_dot_visitor.h"
 
@@ -41,11 +42,17 @@ void compiler_destroy(Compiler* compiler) {
     report_collector_destroy(&compiler->rc);
 }
 
-Package* compiler_discover_packages(Compiler* compiler, StringView path) {
+StringView compiler_get_collection_path(Compiler* compiler, StringView collection_name) {
+    assert(compiler != NULL);
+    const StringView* path = hashmap_get(&compiler->build_options->collections, &collection_name);
+    return path != NULL ? *path : STRING_VIEW_EMPTY;
+}
+
+Package* compiler_load_package(Compiler* compiler, StringView dirpath) {
     assert(compiler != NULL);
 
     // Resolve absolute path
-    String abs_path = path_get_absolute(path);
+    String abs_path = path_get_absolute(dirpath);
     StringView abs_path_sv = string_get_view(abs_path);
 
     StringView package_name = path_get_basename(abs_path_sv);
@@ -108,7 +115,7 @@ Package* compiler_discover_packages(Compiler* compiler, StringView path) {
 
         // Process subdirectories recursively
         if (entry->is_dir) {
-            Package* subpackage = compiler_discover_packages(compiler, string_get_view(entry->fullpath));
+            Package* subpackage = compiler_load_package(compiler, string_get_view(entry->fullpath));
             if (subpackage == NULL) {
                 REPORT_NOTE(&compiler->rc, "driver", "skipping '"SV_FMT"' (no package created)", SV_ARG(basename));
                 continue;
@@ -132,10 +139,12 @@ Package* compiler_discover_packages(Compiler* compiler, StringView path) {
 
             SourceFile* source_file = source_file_create(string_get_view(entry->fullpath), &compiler->rc);
             hashmap_insert(&compiler->source_files, &entry->fullpath, &source_file);
-            vector_push_back(&package->source_files, &source_file);
-            source_file->package = package;
 
-            REPORT_INFO(&compiler->rc, "driver", "added source file '" SV_FMT"'.", SV_ARG(basename));
+            if (source_file != NULL) {
+                vector_push_back(&package->source_files, &source_file);
+                source_file->package = package;
+                REPORT_INFO(&compiler->rc, "driver", "added source file '" SV_FMT"'.", SV_ARG(basename));
+            }
 
             // Clear entry path since ownership transferred
             entry->fullpath = STRING_EMPTY;
@@ -150,23 +159,33 @@ Package* compiler_discover_packages(Compiler* compiler, StringView path) {
     }
 
     return package;
+
 }
 
-bool compiler_parse_source_files(Compiler* compiler) {
+Package* compiler_try_resolve_imported_package(Compiler* compiler, StringView collection_name, StringView package_path) {
     assert(compiler != NULL);
 
-    bool is_ok = true;
+    String import_path = STRING_EMPTY;
 
-    HashmapIterator source_file_it = hashmap_get_it(&compiler->source_files);
-    SourceFile* source_file = NULL;
-    while (hashmap_it_next(&source_file_it, NULL, &source_file)) {
-        if (!source_file_parse_ast(source_file)) {
-            is_ok = false;
+    if (!is_string_view_empty(collection_name)) {
+        StringView collection_path = compiler_get_collection_path(compiler, collection_name);
+        if (is_string_view_empty(collection_path)) {
+            REPORT_ERROR(&compiler->rc, "driver", "could not resolve collection with name '" SV_FMT"'.", SV_ARG(collection_name));
+            return NULL;
         }
+
+        import_path = path_join_sv(collection_path, package_path);
+    }
+    else {
+        import_path = path_join_sv(string_get_view(compiler->build_options->root_path), package_path);
     }
 
-    return is_ok;
+    Package* package = compiler_load_package(compiler, string_get_view(import_path));
+    string_destroy(&import_path);
+
+    return package;
 }
+
 
 typedef struct { u32 indent; } DumpAstTextCtx;
 
@@ -235,4 +254,45 @@ void compiler_dump_ast_dot(const Compiler* compiler) {
             ast_print_dot(sf->ast, stdout);
         }
     }
+}
+
+bool compiler_parse_source_files(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    bool is_ok = true;
+
+    HashmapIterator source_file_it = hashmap_get_it(&compiler->source_files);
+    SourceFile* source_file = NULL;
+    StringView source_file_path = STRING_VIEW_EMPTY;
+
+    while (hashmap_it_next(&source_file_it, &source_file_path, &source_file)) {
+        if (source_file == NULL) {
+            continue;
+        }
+
+        if (!source_file_parse_ast(source_file)) {
+            is_ok = false;
+        }
+    }
+
+    return is_ok;
+}
+
+bool compiler_resolve_imports(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    bool is_ok = true;
+
+    HashmapIterator source_file_it = hashmap_get_it(&compiler->source_files);
+    SourceFile* source_file = NULL;
+    while (hashmap_it_next(&source_file_it, NULL, &source_file)) {
+        if (source_file == NULL) {
+            continue;
+        }
+        if (!source_file_resolve_imports(source_file, compiler)) {
+            is_ok = false;
+        }
+    }
+
+    return is_ok;
 }

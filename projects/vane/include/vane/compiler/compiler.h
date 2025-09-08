@@ -36,10 +36,16 @@ Compiler compiler_create(BuildOptions* build_options);
 
 void compiler_destroy(Compiler* compiler);
 
-Package* compiler_discover_packages(Compiler* compiler, StringView path);
+StringView compiler_get_collection_path(Compiler* compiler, StringView collection_name);
 
-bool compiler_parse_source_files(Compiler* compiler);
+Package* compiler_load_package(Compiler* compiler, StringView dirpath);
+
+Package* compiler_try_resolve_imported_package(Compiler* compiler, StringView collection_name, StringView package_path);
 
 void compiler_dump_ast(const Compiler* compiler);
 
 void compiler_dump_ast_dot(const Compiler* compiler);
+
+bool compiler_parse_source_files(Compiler* compiler);
+
+bool compiler_resolve_imports(Compiler* compiler);
