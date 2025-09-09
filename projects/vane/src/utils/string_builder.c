@@ -155,8 +155,8 @@ void string_builder_append_c(StringBuilder* sb, char c) {
 
     string_builder_reserve(sb, 1);
 
-    sb->data[sb->len++] = c;
-    sb->data[sb->len]   = '\0';
+    sb->data[sb->len] = c;
+    sb->data[++sb->len]   = '\0';
 }
 
 void string_builder_append_rune(StringBuilder* sb, Rune r) {

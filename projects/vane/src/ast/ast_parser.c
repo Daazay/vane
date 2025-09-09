@@ -1,37 +1,45 @@
 #include "vane/ast/ast_parser.h"
 
-#define PARSE_ERROR_LOC_AP(LOC, FMT, ...)  REPORT_ERROR_LOC((ast_parser)->ts->scanner.rc,  "parser", (LOC), FMT, ##__VA_ARGS__)
-#define PARSE_INFO_LOC_AP(LOC, FMT, ...)   REPORT_INFO_LOC((ast_parser)->ts->scanner.rc,   "parser", (LOC), FMT, ##__VA_ARGS__)
-#define PARSE_NOTE_LOC_AP(LOC, FMT, ...)   REPORT_NOTE_LOC((ast_parser)->ts->scanner.rc,   "parser", (LOC), FMT, ##__VA_ARGS__)
-#define PARSE_DEBUG_LOC_AP(LOC, FMT, ...)  REPORT_DEBUG_LOC((ast_parser)->ts->scanner.rc,  "parser", (LOC), FMT, ##__VA_ARGS__)
+#define TK_NAME(K) token_kind_get_value((K))
 
-#define PARSE_ERROR_LOC_TS(TS, LOC, FMT, ...) REPORT_ERROR_LOC((TS)->scanner.rc, "parser", (LOC), FMT, ##__VA_ARGS__)
-#define PARSE_INFO_LOC_TS(TS, LOC, FMT, ...)  REPORT_INFO_LOC((TS)->scanner.rc,  "parser", (LOC), FMT, ##__VA_ARGS__)
-#define PARSE_NOTE_LOC_TS(TS, LOC, FMT, ...)  REPORT_NOTE_LOC((TS)->scanner.rc,  "parser", (LOC), FMT, ##__VA_ARGS__)
-#define PARSE_DEBUG_LOC_TS(TS, LOC, FMT, ...) REPORT_DEBUG_LOC((TS)->scanner.rc, "parser", (LOC), FMT, ##__VA_ARGS__)
+#define PARSE_ERR_AT(TS, LOC, FMT, ...)  REPORT_ERROR_LOC((TS)->scanner.rc, "parser", (LOC), FMT, ##__VA_ARGS__)
+#define PARSE_NOTE_AT(TS, LOC, FMT, ...) REPORT_NOTE_LOC((TS)->scanner.rc, "parser", (LOC), FMT, ##__VA_ARGS__)
 
+#define PARSE_ERR_EXPECT_GOT(TS, LOC, EXPECTED_STR, GOT_KIND)   PARSE_ERR_AT((TS), (LOC), "expected %s, but got '%s'", (EXPECTED_STR), TK_NAME((GOT_KIND)))
+#define PARSE_ERR_EXPECT_KIND(TS, LOC, EXPECTED_KIND, GOT_KIND) PARSE_ERR_AT((TS), (LOC), "expected '%s', but got '%s'", TK_NAME((EXPECTED_KIND)), TK_NAME((GOT_KIND)))
+
+static inline const Token* ts_consume_if(TokenStream* ts, TokenKind expected) {
+    const Token* t = token_stream_peek_next(ts);
+    if (t->kind == expected) {
+        token_stream_move_forward(ts);
+        return token_stream_get_curr(ts);
+    }
+    return t;
+}
+
+static inline const Token* advance_if(TokenStream* ts, TokenKind expected) {
+    return ts_consume_if(ts, expected);
+}
 
 static inline bool is_token_kind_beginning_of_expr(TokenKind kind) {
-    return
-        (kind == TOKEN_IDENTIFIER) ||
-        (kind == TOKEN_L_BRACE) ||
-        is_token_kind_literal(kind) ||
-        is_token_kind_prefix_unop(kind);
+    return (kind == TOKEN_IDENTIFIER)  ||
+           (kind == TOKEN_L_BRACE)     ||
+           is_token_kind_literal(kind) ||
+           is_token_kind_prefix_unop(kind);
 }
 
 static inline bool is_token_kind_beginning_of_stmt(TokenKind kind) {
-    return
-        (kind == TOKEN_KEYWORD_BEGIN) ||
-        (kind == TOKEN_KEYWORD_TYPE) ||
-        (kind == TOKEN_KEYWORD_VAR) ||
-        (kind == TOKEN_KEYWORD_IF) ||
-        (kind == TOKEN_KEYWORD_WHILE) ||
-        (kind == TOKEN_KEYWORD_DO) ||
-        (kind == TOKEN_KEYWORD_BREAK) ||
-        (kind == TOKEN_KEYWORD_CONTINUE) ||
-        (kind == TOKEN_KEYWORD_RETURN) ||
-        (kind == TOKEN_SEMICOLON) ||
-        is_token_kind_beginning_of_expr(kind);
+    return (kind == TOKEN_KEYWORD_BEGIN)     ||
+           (kind == TOKEN_KEYWORD_TYPE)      ||
+           (kind == TOKEN_KEYWORD_VAR)       ||
+           (kind == TOKEN_KEYWORD_IF)        ||
+           (kind == TOKEN_KEYWORD_WHILE)     ||
+           (kind == TOKEN_KEYWORD_DO)        ||
+           (kind == TOKEN_KEYWORD_BREAK)     ||
+           (kind == TOKEN_KEYWORD_CONTINUE)  ||
+           (kind == TOKEN_KEYWORD_RETURN)    ||
+           (kind == TOKEN_SEMICOLON)         ||
+           is_token_kind_beginning_of_expr(kind);
 }
 
 static inline ASTNode* ast_node_error_create(ASTNodeKind failed, ASTNode* prev, TokenLoc loc) {
@@ -255,34 +263,9 @@ static inline ASTNode* ast_node_expr_literal_create(TokenKind token_kind, String
     return node;
 }
 
-
-static inline const Token* advance_if(TokenStream* ts, TokenKind expected) {
-    const Token* token = token_stream_peek_next(ts);
-    if (token->kind == expected) {
-        token_stream_move_forward(ts);
-        return token_stream_get_curr(ts);
-    }
-
-    REPORT_ERROR_LOC(ts->scanner.rc, "parser", token->loc, "expected '%s', but got '%s'", token_kind_get_value(expected), token_kind_get_value(token->kind));
-    return token;
-}
-
-static inline const Token* expect(TokenStream* ts, TokenKind expected) {
-    const Token* token = token_stream_peek_next(ts);
-    if (token->kind == expected) {
-        return token;
-    }
-
-    REPORT_ERROR_LOC(ts->scanner.rc, "parser", token->loc, "expected '%s', but got '%s'", token_kind_get_value(expected), token_kind_get_value(token->kind));
-    return token;
-}
-
 ASTParser ast_parser_create(TokenStream* ts) {
     assert(ts != NULL);
-
-    return (ASTParser) {
-        .ts = ts,
-    };
+    return (ASTParser) { .ts = ts, };
 }
 
 /*...............................MISC...............................*/
@@ -292,6 +275,7 @@ ASTNode* ast_parser_parse_identifier(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_IDENTIFIER);
     if (token->kind != TOKEN_IDENTIFIER) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_IDENTIFIER, token->kind);
         return ast_node_error_create(AST_NODE_IDENTIFIER, NULL, token->loc);
     }
 
@@ -312,8 +296,7 @@ ASTNode* ast_parser_parse_typeref(ASTParser* ast_parser) {
     default: break;
     }
 
-    PARSE_ERROR_LOC_AP(token->loc, "unexpected token '%s' in type reference", token_kind_get_value(token->kind));
-    PARSE_NOTE_LOC_AP(token->loc, "expected identifier, '^', '[', or '(' to start a type");
+    PARSE_ERR_EXPECT_GOT(ast_parser->ts, token->loc, "identifier, '^', '[' or '('", token->kind);
     return ast_node_error_create(AST_NODE_GROUP_TYPEREF, NULL, token->loc);
 }
 
@@ -322,6 +305,7 @@ ASTNode* ast_parser_parse_typeref_custom(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_IDENTIFIER);
     if (token->kind != TOKEN_IDENTIFIER) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_IDENTIFIER, token->kind);
         return ast_node_error_create(AST_NODE_TYPEREF_CUSTOM, NULL, token->loc);
     }
 
@@ -333,11 +317,11 @@ ASTNode* ast_parser_parse_typeref_ptr(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_CARET);
     if (token->kind != TOKEN_CARET) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_CARET, token->kind);
         return ast_node_error_create(AST_NODE_TYPEREF_PTR, NULL, token->loc);
     }
 
     TokenLoc loc = token->loc;
-
     ASTNode* typeref = ast_parser_parse_typeref(ast_parser);
     loc.end = typeref->loc.end;
 
@@ -353,6 +337,7 @@ ASTNode* ast_parser_parse_typeref_arr(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_L_BRACKET);
     if (token->kind != TOKEN_L_BRACKET) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_L_BRACKET, token->kind);
         return ast_node_error_create(AST_NODE_TYPEREF_ARR, NULL, token->loc);
     }
 
@@ -363,7 +348,6 @@ ASTNode* ast_parser_parse_typeref_arr(ASTParser* ast_parser) {
     if (token->kind != TOKEN_R_BRACKET) {
         size_expr = ast_parser_parse_expr(ast_parser);
         loc.end = size_expr->loc.end;
-
         if (size_expr->kind == AST_NODE_ERROR) {
             return ast_node_error_create(AST_NODE_TYPEREF_ARR, size_expr, loc);
         }
@@ -371,15 +355,14 @@ ASTNode* ast_parser_parse_typeref_arr(ASTParser* ast_parser) {
 
     token = advance_if(ast_parser->ts, TOKEN_R_BRACKET);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_R_BRACKET) {
         ast_node_destroy(size_expr);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_R_BRACKET, token->kind);
         return ast_node_error_create(AST_NODE_TYPEREF_ARR, NULL, loc);
     }
 
     ASTNode* typeref = ast_parser_parse_typeref(ast_parser);
     loc.end = typeref->loc.end;
-
     if (typeref->kind == AST_NODE_ERROR) {
         ast_node_destroy(size_expr);
         return ast_node_error_create(AST_NODE_TYPEREF_ARR, typeref, loc);
@@ -398,16 +381,15 @@ ASTNode* ast_parser_parse_typeref_fun_param(ASTParser* ast_parser) {
     ASTNode* typeref = NULL;
 
     if (token->kind == TOKEN_IDENTIFIER) {
-        // Look ahead to check for colon (named param)
+        // Look-ahead for ':' to distinguish "x: T" vs just "T"
         token_stream_move_forward(ast_parser->ts);
         token = token_stream_peek_next(ast_parser->ts);
 
         if (token->kind == TOKEN_COLON) {
             token_stream_move_back(ast_parser->ts);
-
             id = ast_parser_parse_identifier(ast_parser);
 
-            // skip colon token
+            // consume ':'
             token_stream_move_forward(ast_parser->ts);
 
             typeref = ast_parser_parse_typeref(ast_parser);
@@ -415,7 +397,6 @@ ASTNode* ast_parser_parse_typeref_fun_param(ASTParser* ast_parser) {
         }
         else {
             token_stream_move_back(ast_parser->ts);
-
             typeref = ast_parser_parse_typeref(ast_parser);
             loc.end = typeref->loc.end;
         }
@@ -438,6 +419,7 @@ ASTNode* ast_parser_parse_typeref_fun(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_L_BRACE);
     if (token->kind != TOKEN_L_BRACE) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_L_BRACE, token->kind);
         return ast_node_error_create(AST_NODE_TYPEREF_FUN, NULL, token->loc);
     }
 
@@ -448,7 +430,6 @@ ASTNode* ast_parser_parse_typeref_fun(ASTParser* ast_parser) {
     while (!is_token_stream_end(ast_parser->ts) && token->kind != TOKEN_R_BRACE) {
         ASTNode* param = ast_parser_parse_typeref_fun_param(ast_parser);
         loc.end = param->loc.end;
-
         if (param->kind == AST_NODE_ERROR) {
             vector_destroy(&params);
             return ast_node_error_create(AST_NODE_TYPEREF_FUN, param, loc);
@@ -467,23 +448,22 @@ ASTNode* ast_parser_parse_typeref_fun(ASTParser* ast_parser) {
 
     token = advance_if(ast_parser->ts, TOKEN_R_BRACE);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_R_BRACE) {
         vector_destroy(&params);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_R_BRACE, token->kind);
         return ast_node_error_create(AST_NODE_TYPEREF_FUN, NULL, loc);
     }
 
     token = advance_if(ast_parser->ts, TOKEN_MINUS_GREATER);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_MINUS_GREATER) {
         vector_destroy(&params);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_MINUS_GREATER, token->kind);
         return ast_node_error_create(AST_NODE_TYPEREF_FUN, NULL, loc);
     }
 
     ASTNode* typeref = ast_parser_parse_typeref(ast_parser);
     loc.end = typeref->loc.end;
-
     if (typeref->kind == AST_NODE_ERROR) {
         vector_destroy(&params);
         return ast_node_error_create(AST_NODE_TYPEREF_FUN, typeref, loc);
@@ -506,8 +486,7 @@ ASTNode* ast_parser_parse_package_entity(ASTParser* ast_parser) {
         break;
     }
 
-    //PARSE_ERROR_LOC_AP(token->loc, "unexpected token '%s' in package entity", token_kind_get_value(token->kind));
-    //PARSE_NOTE_LOC_AP(token->loc, "expected 'import', 'fun', identifier, '^', '[', or '(' to start a package entity");
+    PARSE_ERR_EXPECT_GOT(ast_parser->ts, token->loc, "'import', 'type' or 'fun'", token->kind);
     return ast_node_error_create(AST_NODE_GROUP_PACKAGE_ENTITY, NULL, token->loc);
 }
 
@@ -516,6 +495,7 @@ ASTNode* ast_parser_parse_import_decl(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_KEYWORD_IMPORT);
     if (token->kind != TOKEN_KEYWORD_IMPORT) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_IMPORT, token->kind);
         return ast_node_error_create(AST_NODE_IMPORT_DECL, NULL, token->loc);
     }
 
@@ -523,8 +503,8 @@ ASTNode* ast_parser_parse_import_decl(ASTParser* ast_parser) {
 
     token = advance_if(ast_parser->ts, TOKEN_LITERAL_STRING);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_LITERAL_STRING) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_LITERAL_STRING, token->kind);
         return ast_node_error_create(AST_NODE_IMPORT_DECL, NULL, loc);
     }
 
@@ -537,7 +517,6 @@ ASTNode* ast_parser_parse_import_decl(ASTParser* ast_parser) {
 
         alias = ast_parser_parse_identifier(ast_parser);
         loc.end = alias->loc.end;
-
         if (alias->kind == AST_NODE_ERROR) {
             ast_node_destroy(path);
             return ast_node_error_create(AST_NODE_IMPORT_DECL, alias, loc);
@@ -556,7 +535,6 @@ ASTNode* ast_parser_parse_fun_param(ASTParser* ast_parser) {
     }
 
     TokenLoc loc = id->loc;
-
     ASTNode* typeref = NULL;
 
     const Token* token = token_stream_peek_next(ast_parser->ts);
@@ -565,7 +543,6 @@ ASTNode* ast_parser_parse_fun_param(ASTParser* ast_parser) {
 
         typeref = ast_parser_parse_typeref(ast_parser);
         loc.end = typeref->loc.end;
-
         if (typeref->kind == AST_NODE_ERROR) {
             ast_node_destroy(id);
             return ast_node_error_create(AST_NODE_FUN_PARAM, typeref, loc);
@@ -587,8 +564,8 @@ ASTNode* ast_parser_parse_fun_sign(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_L_BRACE);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_L_BRACE) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_L_BRACE, token->kind);
         ast_node_destroy(id);
         return ast_node_error_create(AST_NODE_FUN_SIGN, NULL, loc);
     }
@@ -603,7 +580,6 @@ ASTNode* ast_parser_parse_fun_sign(ASTParser* ast_parser) {
 
         ASTNode* param = ast_parser_parse_fun_param(ast_parser);
         loc.end = param->loc.end;
-
         if (param->kind == AST_NODE_ERROR) {
             ast_node_destroy(id);
             vector_destroy(&params);
@@ -611,7 +587,6 @@ ASTNode* ast_parser_parse_fun_sign(ASTParser* ast_parser) {
         }
 
         vector_push_back(&params, &param);
-
         token = token_stream_peek_next(ast_parser->ts);
         if (token->kind == TOKEN_COMMA) {
             token_stream_move_forward(ast_parser->ts);
@@ -622,22 +597,20 @@ ASTNode* ast_parser_parse_fun_sign(ASTParser* ast_parser) {
 
     token = advance_if(ast_parser->ts, TOKEN_R_BRACE);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_R_BRACE) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_R_BRACE, token->kind);
         ast_node_destroy(id);
         vector_destroy(&params);
         return ast_node_error_create(AST_NODE_FUN_SIGN, NULL, loc);
     }
 
     ASTNode* typeref = NULL;
-
     token = token_stream_peek_next(ast_parser->ts);
     if (token->kind == TOKEN_COLON) {
         token_stream_move_forward(ast_parser->ts);
 
         typeref = ast_parser_parse_typeref(ast_parser);
         loc.end = typeref->loc.end;
-
         if (typeref->kind == AST_NODE_ERROR) {
             ast_node_destroy(id);
             vector_destroy(&params);
@@ -653,6 +626,7 @@ ASTNode* ast_parser_parse_fun_decl(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_KEYWORD_FUN);
     if (token->kind != TOKEN_KEYWORD_FUN) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_FUN, token->kind);
         return ast_node_error_create(AST_NODE_FUN_DECL, NULL, token->loc);
     }
 
@@ -660,7 +634,6 @@ ASTNode* ast_parser_parse_fun_decl(ASTParser* ast_parser) {
 
     ASTNode* sign = ast_parser_parse_fun_sign(ast_parser);
     loc.end = sign->loc.end;
-
     if (sign->kind == AST_NODE_ERROR) {
         return ast_node_error_create(AST_NODE_FUN_DECL, sign, loc);
     }
@@ -673,7 +646,6 @@ ASTNode* ast_parser_parse_fun_decl(ASTParser* ast_parser) {
 
         ASTNode* expr = ast_parser_parse_expr(ast_parser);
         loc.end = expr->loc.end;
-
         if (expr->kind == AST_NODE_ERROR) {
             ast_node_destroy(sign);
             vector_destroy(&block);
@@ -684,7 +656,7 @@ ASTNode* ast_parser_parse_fun_decl(ASTParser* ast_parser) {
         vector_push_back(&block, &return_stmt);
     }
     else {
-        while (!is_token_stream_end(ast_parser->ts) && token->kind != TOKEN_KEYWORD_END) {
+        while (!is_token_stream_end(ast_parser->ts) && token_stream_peek_next(ast_parser->ts)->kind != TOKEN_KEYWORD_END) {
             ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
             loc.end = stmt->loc.end;
 
@@ -695,14 +667,12 @@ ASTNode* ast_parser_parse_fun_decl(ASTParser* ast_parser) {
             }
 
             vector_push_back(&block, &stmt);
-
-            token = token_stream_peek_next(ast_parser->ts);
         }
 
         token = advance_if(ast_parser->ts, TOKEN_KEYWORD_END);
         loc.end = token->loc.end;
-
         if (token->kind != TOKEN_KEYWORD_END) {
+            PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_END, token->kind);
             ast_node_destroy(sign);
             vector_destroy(&block);
             return ast_node_error_create(AST_NODE_FUN_DECL, NULL, loc);
@@ -739,6 +709,7 @@ ASTNode* ast_parser_parse_stmt(ASTParser* ast_parser) {
         }
     }
 
+    PARSE_ERR_EXPECT_GOT(ast_parser->ts, token->loc, "'begin', 'type', 'var', 'if', 'while', 'do', 'break', 'continue', 'return' or ';'", token->kind);
     return ast_node_error_create(AST_NODE_GROUP_STMT, NULL, token->loc);
 }
 
@@ -747,6 +718,7 @@ ASTNode* ast_parser_parse_stmt_typealias_decl(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_KEYWORD_TYPE);
     if (token->kind != TOKEN_KEYWORD_TYPE) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_TYPE, token->kind);
         return ast_node_error_create(AST_NODE_STMT_TYPEALIAS_DECL, NULL, token->loc);
     }
 
@@ -754,22 +726,20 @@ ASTNode* ast_parser_parse_stmt_typealias_decl(ASTParser* ast_parser) {
 
     ASTNode* id = ast_parser_parse_identifier(ast_parser);
     loc.end = id->loc.end;
-
     if (id->kind == AST_NODE_ERROR) {
         return ast_node_error_create(AST_NODE_STMT_TYPEALIAS_DECL, id, loc);
     }
 
     token = advance_if(ast_parser->ts, TOKEN_EQUAL);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_EQUAL) {
         ast_node_destroy(id);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_EQUAL, token->kind);
         return ast_node_error_create(AST_NODE_STMT_TYPEALIAS_DECL, NULL, loc);
     }
 
     ASTNode* typeref = ast_parser_parse_typeref(ast_parser);
     loc.end = typeref->loc.end;
-
     if (typeref->kind == AST_NODE_ERROR) {
         ast_node_destroy(id);
         return ast_node_error_create(AST_NODE_STMT_TYPEALIAS_DECL, typeref, loc);
@@ -783,6 +753,7 @@ ASTNode* ast_parser_parse_stmt_block(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_KEYWORD_BEGIN);
     if (token->kind != TOKEN_KEYWORD_BEGIN) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_BEGIN, token->kind);
         return ast_node_error_create(AST_NODE_STMT_BLOCK, NULL, token->loc);
     }
 
@@ -804,9 +775,9 @@ ASTNode* ast_parser_parse_stmt_block(ASTParser* ast_parser) {
 
     token = advance_if(ast_parser->ts, TOKEN_KEYWORD_END);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_KEYWORD_END) {
         vector_destroy(&block);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_END, token->kind);
         return ast_node_error_create(AST_NODE_STMT_BLOCK, NULL, loc);
     }
 
@@ -822,17 +793,14 @@ ASTNode* ast_parser_parse_stmt_var_item(ASTParser* ast_parser) {
     }
 
     TokenLoc loc = id->loc;
-
     ASTNode* typeref = NULL;
 
     const Token* token = token_stream_peek_next(ast_parser->ts);
-
     if (token->kind == TOKEN_COLON) {
         token_stream_move_forward(ast_parser->ts);
 
         typeref = ast_parser_parse_typeref(ast_parser);
         loc.end = typeref->loc.end;
-
         if (typeref->kind == AST_NODE_ERROR) {
             ast_node_destroy(id);
             return ast_node_error_create(AST_NODE_STMT_VAR_ITEM, typeref, loc);
@@ -840,18 +808,16 @@ ASTNode* ast_parser_parse_stmt_var_item(ASTParser* ast_parser) {
     }
 
     ASTNode* expr = NULL;
-
     token = token_stream_peek_next(ast_parser->ts);
-
     if (token->kind == TOKEN_EQUAL) {
         token_stream_move_forward(ast_parser->ts);
 
         expr = ast_parser_parse_expr(ast_parser);
         loc.end = expr->loc.end;
-
         if (expr->kind == AST_NODE_ERROR) {
             ast_node_destroy(id);
             ast_node_destroy(typeref);
+            REPORT_ERROR_LOC(ast_parser->ts->scanner.rc, "parser", loc, "failed to parse var decl item");
             return ast_node_error_create(AST_NODE_STMT_VAR_ITEM, expr, loc);
         }
     }
@@ -864,11 +830,11 @@ ASTNode* ast_parser_parse_stmt_var_decl(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_KEYWORD_VAR);
     if (token->kind != TOKEN_KEYWORD_VAR) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_VAR, token->kind);
         return ast_node_error_create(AST_NODE_STMT_VAR_DECL, NULL, token->loc);
     }
 
     TokenLoc loc = token->loc;
-
     Vector items = vector_create(4, VECTOR_SPECS(ASTNode*, &ast_node_destroy));
 
     do {
@@ -900,12 +866,14 @@ ASTNode* ast_parser_parse_stmt_branch(ASTParser* ast_parser, bool start_with_els
     if (start_with_else) {
         token = advance_if(ast_parser->ts, TOKEN_KEYWORD_ELSE);
         if (token->kind != TOKEN_KEYWORD_ELSE) {
+            PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_ELSE, token->kind);
             return ast_node_error_create(AST_NODE_STMT_BRANCH, NULL, token->loc);
         }
     }
     else {
         token = advance_if(ast_parser->ts, TOKEN_KEYWORD_IF);
         if (token->kind != TOKEN_KEYWORD_IF) {
+            PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_IF, token->kind);
             return ast_node_error_create(AST_NODE_STMT_BRANCH, NULL, token->loc);
         }
     }
@@ -933,9 +901,9 @@ ASTNode* ast_parser_parse_stmt_branch(ASTParser* ast_parser, bool start_with_els
 
         token = advance_if(ast_parser->ts, TOKEN_KEYWORD_THEN);
         loc.end = token->loc.end;
-
         if (token->kind != TOKEN_KEYWORD_THEN) {
             ast_node_destroy(expr);
+            PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_THEN, token->kind);
             return ast_node_error_create(AST_NODE_STMT_BRANCH, NULL, loc);
         }
     }
@@ -972,6 +940,7 @@ ASTNode* ast_parser_parse_stmt_branch(ASTParser* ast_parser, bool start_with_els
         if (token->kind != TOKEN_KEYWORD_END) {
             ast_node_destroy(expr);
             vector_destroy(&block);
+            PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_END, token->kind);
             return ast_node_error_create(AST_NODE_STMT_BRANCH, NULL, loc);
         }
     }
@@ -982,6 +951,7 @@ ASTNode* ast_parser_parse_stmt_branch(ASTParser* ast_parser, bool start_with_els
         if (token->kind != TOKEN_KEYWORD_ELSE && token->kind != TOKEN_KEYWORD_END) {
             ast_node_destroy(expr);
             vector_destroy(&block);
+            PARSE_ERR_EXPECT_GOT(ast_parser->ts, token->loc, "'else' or 'end'", token->kind);
             return ast_node_error_create(AST_NODE_STMT_BRANCH, NULL, token->loc);
         }
     }
@@ -992,19 +962,18 @@ ASTNode* ast_parser_parse_stmt_branch(ASTParser* ast_parser, bool start_with_els
 ASTNode* ast_parser_parse_stmt_condition(ASTParser* ast_parser) {
     assert(ast_parser != NULL);
 
-    const Token* token = expect(ast_parser->ts, TOKEN_KEYWORD_IF);
+    const Token* token = token_stream_peek_next(ast_parser->ts);
     if (token->kind != TOKEN_KEYWORD_IF) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_IF, token->kind);
         return ast_node_error_create(AST_NODE_STMT_CONDITION, NULL, token->loc);
     }
 
     TokenLoc loc = token->loc;
-
     Vector branches = vector_create(4, VECTOR_SPECS(ASTNode*, &ast_node_destroy));
 
     do {
         ASTNode* branch = ast_parser_parse_stmt_branch(ast_parser, branches.size > 0);
         loc.end = branch->loc.end;
-
         if (branch->kind == AST_NODE_ERROR) {
             vector_destroy(&branches);
             return ast_node_error_create(AST_NODE_STMT_CONDITION, branch, loc);
@@ -1012,10 +981,11 @@ ASTNode* ast_parser_parse_stmt_condition(ASTParser* ast_parser) {
 
         vector_push_back(&branches, &branch);
 
-        // in case of else branch
+        // if this was 'else' branch (no expr), finish
         if (branch->as.stmt_branch.expr == NULL) {
             break;
         }
+
         token = token_stream_peek_next(ast_parser->ts);
         if (token->kind == TOKEN_KEYWORD_END) {
             break;
@@ -1025,6 +995,7 @@ ASTNode* ast_parser_parse_stmt_condition(ASTParser* ast_parser) {
     token = advance_if(ast_parser->ts, TOKEN_KEYWORD_END);
     if (token->kind != TOKEN_KEYWORD_END) {
         vector_destroy(&branches);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_END, token->kind);
         return ast_node_error_create(AST_NODE_STMT_CONDITION, NULL, token->loc);
     }
 
@@ -1036,23 +1007,22 @@ ASTNode* ast_parser_parse_stmt_while(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_KEYWORD_WHILE);
     if (token->kind != TOKEN_KEYWORD_WHILE) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_WHILE, token->kind);
         return ast_node_error_create(AST_NODE_STMT_WHILE, NULL, token->loc);
     }
 
     TokenLoc loc = token->loc;
-
     ASTNode* expr = ast_parser_parse_expr(ast_parser);
     loc.end = expr->loc.end;
-
     if (expr->kind == AST_NODE_ERROR) {
         return ast_node_error_create(AST_NODE_STMT_WHILE, expr, loc);
     }
 
     token = advance_if(ast_parser->ts, TOKEN_KEYWORD_DO);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_KEYWORD_DO) {
         ast_node_destroy(expr);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_DO, token->kind);
         return ast_node_error_create(AST_NODE_STMT_WHILE, NULL, loc);
     }
 
@@ -1066,7 +1036,6 @@ ASTNode* ast_parser_parse_stmt_while(ASTParser* ast_parser) {
 
         ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
         loc.end = stmt->loc.end;
-
         if (stmt->kind == AST_NODE_ERROR) {
             ast_node_destroy(expr);
             vector_destroy(&block);
@@ -1078,10 +1047,10 @@ ASTNode* ast_parser_parse_stmt_while(ASTParser* ast_parser) {
 
     token = advance_if(ast_parser->ts, TOKEN_KEYWORD_END);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_KEYWORD_END) {
         ast_node_destroy(expr);
         vector_destroy(&block);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_END, token->kind);
         return ast_node_error_create(AST_NODE_STMT_WHILE, NULL, loc);
     }
 
@@ -1093,11 +1062,11 @@ ASTNode* ast_parser_parse_stmt_do(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_KEYWORD_DO);
     if (token->kind != TOKEN_KEYWORD_DO) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_DO, token->kind);
         return ast_node_error_create(AST_NODE_STMT_DO, NULL, token->loc);
     }
 
     TokenLoc loc = token->loc;
-
     Vector block = vector_create(4, VECTOR_SPECS(ASTNode*, &ast_node_destroy));
 
     while (!is_token_stream_end(ast_parser->ts)) {
@@ -1119,23 +1088,22 @@ ASTNode* ast_parser_parse_stmt_do(ASTParser* ast_parser) {
 
     token = advance_if(ast_parser->ts, TOKEN_KEYWORD_LOOP);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_KEYWORD_LOOP) {
         vector_destroy(&block);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_LOOP, token->kind);
         return ast_node_error_create(AST_NODE_STMT_DO, NULL, loc);
     }
 
     token = advance_if(ast_parser->ts, TOKEN_KEYWORD_WHILE);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_KEYWORD_WHILE) {
         vector_destroy(&block);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_WHILE, token->kind);
         return ast_node_error_create(AST_NODE_STMT_DO, NULL, loc);
     }
 
     ASTNode* expr = ast_parser_parse_expr(ast_parser);
     loc.end = expr->loc.end;
-
     if (expr->kind == AST_NODE_ERROR) {
         vector_destroy(&block);
         return ast_node_error_create(AST_NODE_STMT_DO, expr, loc);
@@ -1149,6 +1117,7 @@ ASTNode* ast_parser_parse_stmt_break(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_KEYWORD_BREAK);
     if (token->kind != TOKEN_KEYWORD_BREAK) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_BREAK, token->kind);
         return ast_node_error_create(AST_NODE_STMT_BREAK, NULL, token->loc);
     }
 
@@ -1160,6 +1129,7 @@ ASTNode* ast_parser_parse_stmt_continue(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_KEYWORD_CONTINUE);
     if (token->kind != TOKEN_KEYWORD_CONTINUE) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_CONTINUE, token->kind);
         return ast_node_error_create(AST_NODE_STMT_CONTINUE, NULL, token->loc);
     }
 
@@ -1171,11 +1141,11 @@ ASTNode* ast_parser_parse_stmt_return(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_KEYWORD_RETURN);
     if (token->kind != TOKEN_KEYWORD_RETURN) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_KEYWORD_RETURN, token->kind);
         return ast_node_error_create(AST_NODE_STMT_RETURN, NULL, token->loc);
     }
 
     TokenLoc loc = token->loc;
-
     ASTNode* expr = NULL;
 
     token = token_stream_peek_next(ast_parser->ts);
@@ -1232,6 +1202,7 @@ ASTNode* ast_parser_parse_expr_with_prec(ASTParser* ast_parser, OpPrecedence pre
 
                 ast_node_destroy(node);
 
+                PARSE_ERR_EXPECT_GOT(ast_parser->ts, loc, "an operator or '('", token->kind);
                 return ast_node_error_create(AST_NODE_GROUP_EXPR, NULL, loc);
             }
 
@@ -1265,6 +1236,7 @@ ASTNode* ast_parser_parse_expr_nud(ASTParser* ast_parser) {
         break;
     }
 
+    PARSE_ERR_EXPECT_GOT(ast_parser->ts, token->loc, "'identifier', '(' , literal or prefix-operator", token->kind);
     return ast_node_error_create(AST_NODE_GROUP_EXPR_NUD, NULL, token->loc);
 }
 
@@ -1285,6 +1257,8 @@ ASTNode* ast_parser_parse_expr_led(ASTParser* ast_parser, ASTNode* lhs, OpPreced
         }
         break;
     }
+
+    PARSE_ERR_EXPECT_GOT(ast_parser->ts, token->loc, "'(', '[' or '.'", token->kind);
     return ast_node_error_create(AST_NODE_GROUP_EXPR_LED, NULL, token->loc);
 }
 
@@ -1298,11 +1272,11 @@ ASTNode* ast_parser_parse_expr_binary(ASTParser* ast_parser, ASTNode* lhs, OpPre
 
     if (!is_token_kind_binop(token->kind)) {
         ast_node_destroy(lhs);
+        PARSE_ERR_EXPECT_GOT(ast_parser->ts, loc, "binary operator", token->kind);
         return ast_node_error_create(AST_NODE_EXPR_BINARY, NULL, loc);
     }
 
     TokenKind op = token->kind;
-
     token_stream_move_forward(ast_parser->ts);
 
     ASTNode* rhs = (get_op_associativity(prec) == OP_ASSOC_LEFT)
@@ -1324,6 +1298,7 @@ ASTNode* ast_parser_parse_expr_prefix_unary(ASTParser* ast_parser) {
 
     const Token* token = token_stream_peek_next(ast_parser->ts);
     if (!is_token_kind_prefix_unop(token->kind)) {
+        PARSE_ERR_EXPECT_GOT(ast_parser->ts, token->loc, "prefix unary operator", token->kind);
         return ast_node_error_create(AST_NODE_EXPR_PREFIX_UNARY, NULL, token->loc);
     }
 
@@ -1334,7 +1309,6 @@ ASTNode* ast_parser_parse_expr_prefix_unary(ASTParser* ast_parser) {
 
     ASTNode* rhs = ast_parser_parse_expr_with_prec(ast_parser, OP_PREC_NONE);
     loc.end = rhs->loc.end;
-
     if (rhs->kind == AST_NODE_ERROR) {
         return ast_node_error_create(AST_NODE_EXPR_PREFIX_UNARY, rhs, token->loc);
     }
@@ -1352,6 +1326,7 @@ ASTNode* ast_parser_parse_expr_postfix_unary(ASTParser* ast_parser, ASTNode* lhs
 
     if (!is_token_kind_postfix_unop(token->kind)) {
         ast_node_destroy(lhs);
+        PARSE_ERR_EXPECT_GOT(ast_parser->ts, loc, "postfix unary operator", token->kind);
         return ast_node_error_create(AST_NODE_EXPR_POSTFIX_UNARY, NULL, loc);
     }
 
@@ -1366,11 +1341,11 @@ ASTNode* ast_parser_parse_expr_braces(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_L_BRACE);
     if (token->kind != TOKEN_L_BRACE) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_L_BRACE, token->kind);
         return ast_node_error_create(AST_NODE_EXPR_BRACES, NULL, token->loc);
     }
 
     TokenLoc loc = token->loc;
-
     ASTNode* expr = ast_parser_parse_expr_with_prec(ast_parser, OP_PREC_NONE);
     loc.end = expr->loc.end;
 
@@ -1380,9 +1355,8 @@ ASTNode* ast_parser_parse_expr_braces(ASTParser* ast_parser) {
 
     token = advance_if(ast_parser->ts, TOKEN_R_BRACE);
     loc.end = expr->loc.end;
-
     if (token->kind != TOKEN_R_BRACE) {
-        ast_node_destroy(expr);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_R_BRACE, token->kind);
         return ast_node_error_create(AST_NODE_EXPR_BRACES, NULL, loc);
     }
 
@@ -1394,11 +1368,11 @@ ASTNode* ast_parser_parse_expr_place(ASTParser* ast_parser) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_IDENTIFIER);
     if (token->kind != TOKEN_IDENTIFIER) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_IDENTIFIER, token->kind);
         return ast_node_error_create(AST_NODE_EXPR_PLACE, NULL, token->loc);
     }
 
     String msg = string_from_sv(token->value);
-
     return ast_node_expr_place_create(msg, token->loc);
 }
 
@@ -1411,6 +1385,7 @@ ASTNode* ast_parser_parse_expr_call(ASTParser* ast_parser, ASTNode* callee) {
     loc.end = token->loc.end;
 
     if (token->kind != TOKEN_L_BRACE) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_L_BRACE, token->kind);
         ast_node_destroy(callee);
         return ast_node_error_create(AST_NODE_EXPR_CALL, NULL, loc);
     }
@@ -1448,6 +1423,7 @@ ASTNode* ast_parser_parse_expr_call(ASTParser* ast_parser, ASTNode* callee) {
     if (token->kind != TOKEN_R_BRACE) {
         vector_destroy(&args);
         ast_node_destroy(callee);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_R_BRACE, token->kind);
         return ast_node_error_create(AST_NODE_EXPR_CALL, NULL, loc);
     }
 
@@ -1461,15 +1437,14 @@ ASTNode* ast_parser_parse_expr_index(ASTParser* ast_parser, ASTNode* callee) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_L_BRACKET);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_L_BRACKET) {
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_L_BRACKET, token->kind);
         ast_node_destroy(callee);
         return ast_node_error_create(AST_NODE_EXPR_INDEX, NULL, loc);
     }
 
     ASTNode* index = ast_parser_parse_expr_with_prec(ast_parser, OP_PREC_NONE);
     loc.end = index->loc.end;
-
     if (index->kind == AST_NODE_ERROR) {
         ast_node_destroy(callee);
         return ast_node_error_create(AST_NODE_EXPR_INDEX, index, loc);
@@ -1477,10 +1452,10 @@ ASTNode* ast_parser_parse_expr_index(ASTParser* ast_parser, ASTNode* callee) {
 
     token = advance_if(ast_parser->ts, TOKEN_R_BRACKET);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_R_BRACKET) {
         ast_node_destroy(callee);
         ast_node_destroy(index);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_R_BRACKET, token->kind);
         return ast_node_error_create(AST_NODE_EXPR_INDEX, NULL, loc);
     }
 
@@ -1494,15 +1469,14 @@ ASTNode* ast_parser_parse_expr_member(ASTParser* ast_parser, ASTNode* object) {
 
     const Token* token = advance_if(ast_parser->ts, TOKEN_DOT);
     loc.end = token->loc.end;
-
     if (token->kind != TOKEN_DOT) {
         ast_node_destroy(object);
+        PARSE_ERR_EXPECT_KIND(ast_parser->ts, token->loc, TOKEN_DOT, token->kind);
         return ast_node_error_create(AST_NODE_EXPR_MEMBER, NULL, loc);
     }
 
     ASTNode* member = ast_parser_parse_expr_place(ast_parser);
     loc.end = member->loc.end;
-
     if (member->kind == AST_NODE_ERROR) {
         ast_node_destroy(object);
         return ast_node_error_create(AST_NODE_EXPR_MEMBER, member, loc);
@@ -1516,7 +1490,7 @@ ASTNode* ast_parser_parse_expr_literal(ASTParser* ast_parser) {
 
     const Token* token = token_stream_peek_next(ast_parser->ts);
     if (!is_token_kind_literal(token->kind)) {
-        REPORT_ERROR_LOC(ast_parser->ts->scanner.rc, "parser", token->loc, "expected literal");
+        PARSE_ERR_AT(ast_parser->ts, token->loc, "expected literal, but got '%s'", TK_NAME(token->kind));
         return ast_node_error_create(AST_NODE_EXPR_LITERAL, NULL, token->loc);
     }
 

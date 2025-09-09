@@ -10,6 +10,9 @@
 typedef enum BuildCommand BuildCommand;
 typedef struct BuildOptions BuildOptions;
 
+#define BUILD_OPTIONS_DEFAULT_COLLECTION_COUNT 4
+#define BUILD_OPTIONS_DEFAULT_DEFINE_COUNT     4
+
 enum BuildCommand{
     BUILD_COMMAND_MISSING = 0,
     BUILD_COMMAND_HELP,
@@ -38,13 +41,14 @@ struct BuildOptions {
     bool dump_tokens;
     bool dump_ast;
     bool dump_ast_dot;
+    bool dump_symbols;
     bool werror;
 };
 
 void print_usage(const char* argv0);
 
-void build_options_init(BuildOptions* build_options);
-
-bool build_options_parse_args(BuildOptions* build_options, int argc, const char** argv);
+BuildOptions build_options_create();
 
 void build_options_destroy(BuildOptions* build_options);
+
+bool build_options_parse_args(BuildOptions* build_options, int argc, const char** argv);

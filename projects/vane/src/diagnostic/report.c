@@ -26,32 +26,14 @@ void report_destroy(Report* report) {
     free(report);
 }
 
-/*
-DIAG_SEV_DEBUG
-DIAG_SEV_INFO
-DIAG_SEV_NOTE
-DIAG_SEV_WARNING
-DIAG_SEV_ERROR
-*/
-
 static inline void print_sev(DiagnosticSeverity sev, bool with_color) {
     if (with_color) {
         switch (sev) {
-        case DIAG_SEV_DEBUG:
-            terminal_set_color(TERMINAL_COLOR_WHITE, TERMINAL_COLOR_BLACK);
-            break;
-        case DIAG_SEV_INFO:
-            terminal_set_color(TERMINAL_COLOR_GREEN, TERMINAL_COLOR_BLACK);
-            break;
-        case DIAG_SEV_NOTE:
-            terminal_set_color(TERMINAL_COLOR_CYAN, TERMINAL_COLOR_BLACK);
-            break;
-        case DIAG_SEV_WARNING:
-            terminal_set_color(TERMINAL_COLOR_YELLOW, TERMINAL_COLOR_BLACK);
-            break;
-        case DIAG_SEV_ERROR:
-            terminal_set_color(TERMINAL_COLOR_RED, TERMINAL_COLOR_BLACK);
-            break;
+        case DIAG_SEV_DEBUG:   terminal_set_color(TERMINAL_COLOR_WHITE,  TERMINAL_COLOR_BLACK); break;
+        case DIAG_SEV_INFO:    terminal_set_color(TERMINAL_COLOR_GREEN,  TERMINAL_COLOR_BLACK); break;
+        case DIAG_SEV_NOTE:    terminal_set_color(TERMINAL_COLOR_CYAN,   TERMINAL_COLOR_BLACK); break;
+        case DIAG_SEV_WARNING: terminal_set_color(TERMINAL_COLOR_YELLOW, TERMINAL_COLOR_BLACK); break;
+        case DIAG_SEV_ERROR:   terminal_set_color(TERMINAL_COLOR_RED,    TERMINAL_COLOR_BLACK); break;
         default:
             unreachable();
             break;
@@ -59,7 +41,6 @@ static inline void print_sev(DiagnosticSeverity sev, bool with_color) {
     }
 
     printf("%s", diagnostic_severity_get_name(sev));
-
     if (with_color) {
         terminal_reset_format();
     }

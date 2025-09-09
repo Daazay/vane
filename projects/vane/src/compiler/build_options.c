@@ -198,6 +198,12 @@ static bool handle_dump_ast_dot(ArgParser* parser, const char* value) {
     return true;
 }
 
+static bool handle_dump_symbols(ArgParser* parser, const char* value) {
+    (void)parser; (void)value;
+    parser->options->dump_symbols = true;
+    return true;
+}
+
 static bool handle_werror(ArgParser* parser, const char* value) {
     (void)parser; (void)value;
     parser->options->werror = true;
@@ -221,8 +227,9 @@ static OptionSpec general_options[] = {
 };
 
 static OptionSpec build_parse_options[] = {
-    { "dump-ast", 0,     false, &handle_dump_ast,    "Dump Graphviz DOT of AST for each file." },
-    { "dump-ast-dot", 0, false, &handle_dump_ast_dot,"Dump Graphviz DOT of AST for each file." },
+    { "dump-ast",     0, false, &handle_dump_ast,     "Dump AST for each file." },
+    { "dump-ast-dot", 0, false, &handle_dump_ast_dot, "Dump Graphviz DOT of AST for each file." },
+    { "dump-symbols", 0, false, &handle_dump_symbols, "Dump symtables." },
 };
 
 static CommandSpec commands[] = {
@@ -322,25 +329,38 @@ void print_usage(const char* argv0) {
     }
 }
 
-void build_options_init(BuildOptions* build_options) {
-    assert(build_options != NULL);
+BuildOptions build_options_create() {
+    BuildOptions build_options = { 0 };
 
-    build_options->command = BUILD_COMMAND_MISSING;
-    build_options->root_path = (String){ 0 };
+    build_options.command = BUILD_COMMAND_MISSING;
+    build_options.root_path = (String){ 0 };
 
-    build_options->collections = hashmap_create(4,
+    build_options.collections = hashmap_create(BUILD_OPTIONS_DEFAULT_COLLECTION_COUNT,
         HASHMAP_KEY_SPECS(String, &string_view_item_hash, &string_view_item_eq, &string_destroy),
         HASHMAP_VALUE_SPECS(String, &string_destroy)
     );
 
-    build_options->output_dir = string_from_cstr("./build");
-    build_options->defines = hashmap_create(4,
+    build_options.output_dir = string_from_cstr("./build");
+    build_options.defines = hashmap_create(BUILD_OPTIONS_DEFAULT_DEFINE_COUNT,
         HASHMAP_KEY_SPECS(String, &string_view_item_hash, &string_view_item_eq, &string_destroy),
         HASHMAP_VALUE_SPECS(String, &string_destroy)
     );
 
-    build_options->log_verbosity = 0;
-    build_options->with_color = is_terminal_support_colors();
+    build_options.log_verbosity = 0;
+    build_options.with_color = is_terminal_support_colors();
+
+    return build_options;
+}
+
+void build_options_destroy(BuildOptions* build_options) {
+    if (build_options == NULL) {
+        return;
+    }
+
+    string_destroy(&build_options->root_path);
+    hashmap_destroy(&build_options->collections);
+    hashmap_destroy(&build_options->defines);
+    string_destroy(&build_options->output_dir);
 }
 
 bool build_options_parse_args(BuildOptions* build_options, int argc, const char** argv) {
@@ -385,15 +405,4 @@ bool build_options_parse_args(BuildOptions* build_options, int argc, const char*
     }
 
     return true;
-}
-
-void build_options_destroy(BuildOptions* build_options) {
-    if (build_options == NULL) {
-        return;
-    }
-
-    string_destroy(&build_options->root_path);
-    hashmap_destroy(&build_options->collections);
-    hashmap_destroy(&build_options->defines);
-    string_destroy(&build_options->output_dir);
 }

@@ -42,6 +42,98 @@ void compiler_destroy(Compiler* compiler) {
     report_collector_destroy(&compiler->rc);
 }
 
+static inline bool compiler_should_halt(const Compiler* compiler) {
+    // If any error
+    if (compiler->rc.sev_count[DIAG_SEV_ERROR] > 0) {
+        return true;
+    }
+    // If any warning and we treat em like errors
+    if (compiler->build_options->werror && compiler->rc.sev_count[DIAG_SEV_WARNING] > 0) {
+        return true;
+    }
+    return false;
+}
+
+typedef enum CompilerPipelineStage CompilerPipelineStage;
+
+enum CompilerPipelineStage {
+    COMPILER_PIPE_PARSE_AST,
+    COMPILER_PIPE_RESOLVE_IMPORTS,
+    COMPILER_PIPE_RESOLVE_SYMBOLS,
+    COMPILER_PIPE_BIND_SYMBOLS,
+};
+
+static inline bool compiler_run_upto(Compiler* compiler, CompilerPipelineStage stage) {
+    assert(compiler != NULL);
+
+    if (!compiler_parse_source_files(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_PARSE_AST) return !compiler_should_halt(compiler);
+
+    if (!compiler_resolve_imports(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_IMPORTS) return !compiler_should_halt(compiler);
+
+    if (!compiler_resolve_symbol_decls(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_SYMBOLS) return !compiler_should_halt(compiler);
+
+    if (!compiler_bind_symbols(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_BIND_SYMBOLS) return !compiler_should_halt(compiler);
+
+    return !compiler_should_halt(compiler);
+}
+
+bool compiler_run_command(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    if (compiler->build_options->command == BUILD_COMMAND_HELP) {
+        print_usage("vane");
+        return true;
+    }
+
+    if (is_string_view_empty(string_get_view(compiler->build_options->root_path))) {
+        REPORT_ERROR(&compiler->rc, "driver", "no root path provided.");
+        return false;
+    }
+
+    // Load entry package
+    Package* root = compiler_load_package(compiler, string_get_view(compiler->build_options->root_path));
+    if (root == NULL) {
+        REPORT_ERROR(&compiler->rc, "driver", "failed to load package at '"SV_FMT"'.", SV_ARG(compiler->build_options->root_path));
+        return false;
+    }
+
+    bool status = true;
+    switch (compiler->build_options->command) {
+    case BUILD_COMMAND_PARSE_AST:
+        status = compiler_run_upto(compiler, COMPILER_PIPE_PARSE_AST);
+        break;
+
+    case BUILD_COMMAND_BUILD:
+        status = compiler_run_upto(compiler, COMPILER_PIPE_BIND_SYMBOLS);
+        break;
+
+    default:
+        REPORT_ERROR(&compiler->rc, "driver", "unsupported command.");
+        status = false;
+        break;
+    }
+
+    if (!status) {
+        return false;
+    }
+
+    if (compiler->build_options->dump_ast) {
+        compiler_dump_ast(compiler);
+    }
+    if (compiler->build_options->dump_ast_dot) {
+        compiler_dump_ast_dot(compiler);
+    }
+    if (compiler->build_options->dump_symbols) {
+        compiler_dump_symbols(compiler);
+    }
+
+    return true;
+}
+
 StringView compiler_get_collection_path(Compiler* compiler, StringView collection_name) {
     assert(compiler != NULL);
     const StringView* path = hashmap_get(&compiler->build_options->collections, &collection_name);
@@ -186,10 +278,13 @@ Package* compiler_try_resolve_imported_package(Compiler* compiler, SourceFile* s
     return package;
 }
 
+typedef struct DumpAstTextCtx DumpAstTextCtx;
 
-typedef struct { u32 indent; } DumpAstTextCtx;
+struct DumpAstTextCtx {
+    u32 indent;
+};
 
-static void dump_ast_text_pre(ASTNode* parent, ASTNode* node, void* data) {
+static inline void dump_ast_text_pre(ASTNode* parent, ASTNode* node, void* data) {
     (void)parent;
 
     DumpAstTextCtx* ctx = (DumpAstTextCtx*)data;
@@ -202,10 +297,11 @@ static void dump_ast_text_pre(ASTNode* parent, ASTNode* node, void* data) {
         node->loc.begin.line, node->loc.begin.column,
         node->loc.end.line, node->loc.end.column
     );
+
     ctx->indent++;
 }
 
-static void dump_ast_text_post(ASTNode* parent, ASTNode* node, void* data) {
+static inline void dump_ast_text_post(ASTNode* parent, ASTNode* node, void* data) {
     (void)parent;
     (void)node;
 
@@ -254,6 +350,11 @@ void compiler_dump_ast_dot(const Compiler* compiler) {
             ast_print_dot(sf->ast, stdout);
         }
     }
+}
+
+void compiler_dump_symbols(const Compiler* compiler) {
+    assert(compiler != NULL);
+
 }
 
 bool compiler_parse_source_files(Compiler* compiler) {

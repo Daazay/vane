@@ -80,6 +80,7 @@ static String win_utf16_to_utf8(const u16* buf, u64 len) {
 
     StringBuilder sb = string_builder_create(u8_len);
     sb.len = convert_utf16_to_utf8(buf, len, sb.data, u8_len);
+    sb.data[sb.len] = 0;
 
     return string_builder_release(&sb);
 }
@@ -124,22 +125,21 @@ String path_get_absolute(StringView path) {
     }
 
     // get absolute path length
-    DWORD abs_len = GetFullPathNameW((LPCWSTR)u16_buf, 0, NULL, NULL);
-    if (abs_len == 0) {
+    DWORD need = GetFullPathNameW((LPCWSTR)u16_buf, 0, NULL, NULL);
+    if (need == 0) {
         free(u16_buf);
         return STRING_EMPTY;
     }
 
-    u16* abs_buf = malloc(((u64)abs_len + 1) * sizeof(u16));
+    u16* abs_buf = malloc((u64)need * sizeof(u16));
     assert(abs_buf != NULL);
 
-    GetFullPathNameW((LPCWSTR)u16_buf, abs_len, (LPWSTR)abs_buf, NULL);
-    abs_buf[abs_len] = 0;
-
+    DWORD wrote = GetFullPathNameW((LPCWSTR)u16_buf, need, (LPWSTR)abs_buf, NULL);
     free(u16_buf);
 
-    String result = win_utf16_to_utf8(abs_buf, abs_len);
+    String result = win_utf16_to_utf8(abs_buf, (u64)wrote);
     free(abs_buf);
+
     return result;
 #else
     char cwd[PATH_MAX] = {0};
