@@ -1,0 +1,8 @@
+import "math"
+
+fun main(args: []string): int
+    var n: int = 5
+    var result = math.fib(n)
+
+    return 0
+end

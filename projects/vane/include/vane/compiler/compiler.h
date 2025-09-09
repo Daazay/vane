@@ -40,7 +40,7 @@ StringView compiler_get_collection_path(Compiler* compiler, StringView collectio
 
 Package* compiler_load_package(Compiler* compiler, StringView dirpath);
 
-Package* compiler_try_resolve_imported_package(Compiler* compiler, StringView collection_name, StringView package_path);
+Package* compiler_try_resolve_imported_package(Compiler* compiler, SourceFile* source_file, StringView collection_name, StringView package_path);
 
 void compiler_dump_ast(const Compiler* compiler);
 
@@ -49,3 +49,13 @@ void compiler_dump_ast_dot(const Compiler* compiler);
 bool compiler_parse_source_files(Compiler* compiler);
 
 bool compiler_resolve_imports(Compiler* compiler);
+
+bool compiler_resolve_symbol_decls(Compiler* compiler);
+
+bool compiler_bind_symbols(Compiler* compiler);
+
+bool compiler_resolve_types(Compiler* compiler);
+
+bool compiler_typecheck(Compiler* compiler);
+
+bool compiler_build_cfg(Compiler* compiler);

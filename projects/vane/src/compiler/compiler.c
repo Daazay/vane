@@ -162,8 +162,8 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath) {
 
 }
 
-Package* compiler_try_resolve_imported_package(Compiler* compiler, StringView collection_name, StringView package_path) {
-    assert(compiler != NULL);
+Package* compiler_try_resolve_imported_package(Compiler* compiler, SourceFile* source_file, StringView collection_name, StringView package_path) {
+    assert(compiler != NULL && source_file != NULL);
 
     String import_path = STRING_EMPTY;
 
@@ -177,7 +177,7 @@ Package* compiler_try_resolve_imported_package(Compiler* compiler, StringView co
         import_path = path_join_sv(collection_path, package_path);
     }
     else {
-        import_path = path_join_sv(string_get_view(compiler->build_options->root_path), package_path);
+        import_path = path_join_sv(source_file->package->path, package_path);
     }
 
     Package* package = compiler_load_package(compiler, string_get_view(import_path));
@@ -295,4 +295,46 @@ bool compiler_resolve_imports(Compiler* compiler) {
     }
 
     return is_ok;
+}
+
+bool compiler_resolve_symbol_decls(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    bool status = true;
+
+    HashmapIterator package_it = hashmap_get_it(&compiler->packages);
+    Package* package = NULL;
+
+    while (hashmap_it_next(&package_it, NULL, &package)) {
+        if (package == NULL) {
+            continue;
+        }
+
+        if (!package_resolve_symbol_decls(package)) {
+            status = false;
+        }
+    }
+
+    return status;
+}
+
+bool compiler_bind_symbols(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    bool status = true;
+
+    HashmapIterator package_it = hashmap_get_it(&compiler->packages);
+    Package* package = NULL;
+
+    while (hashmap_it_next(&package_it, NULL, &package)) {
+        if (package == NULL) {
+            continue;
+        }
+
+        if (!package_bind_symbols(package)) {
+            status = false;
+        }
+    }
+
+    return status;
 }

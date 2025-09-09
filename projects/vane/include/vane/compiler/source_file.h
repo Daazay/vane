@@ -9,6 +9,8 @@
 
 #include "vane/diagnostic/report_collector.h"
 
+#include "vane/sema/scope.h"
+
 struct Compiler;
 typedef struct SourceFile SourceFile;
 typedef struct ImportEntry ImportEntry;
@@ -36,6 +38,7 @@ struct SourceFile {
     // ImportEntry
     Vector imports;
 
+    Scope* scope;
     struct Package* package;
 
     ReportCollector* rc;
@@ -48,3 +51,7 @@ void source_file_destroy(SourceFile* source_file);
 bool source_file_parse_ast(SourceFile* source_file);
 
 bool source_file_resolve_imports(SourceFile* source_file, struct Compiler* compiler);
+
+bool source_file_resolve_symbol_decls(SourceFile* source_file);
+
+bool source_file_bind_symbols(SourceFile* source_file);

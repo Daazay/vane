@@ -10,6 +10,8 @@ ASTNode* ast_node_create(ASTNodeKind kind, TokenLoc loc) {
 
     node->kind = kind;
     node->loc = loc;
+    node->scope = NULL;
+    node->symbol = NULL;
 
     return node;
 }

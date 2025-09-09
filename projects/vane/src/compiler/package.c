@@ -7,6 +7,8 @@ Package* package_create(StringView path) {
     assert(package != NULL);
 
     package->path = path;
+
+    package->scope = NULL;
     package->parent_package = NULL;
 
     package->source_files = vector_create(PACKAGE_DEFAULT_SOURCE_FILE_COUNT,
@@ -28,5 +30,45 @@ void package_destroy(Package* package) {
     vector_destroy(&package->source_files);
     vector_destroy(&package->subpackages);
 
+    scope_destroy(package->scope);
+
     free(package);
+}
+
+bool package_resolve_symbol_decls(Package* package) {
+    assert(package != NULL);
+
+    if (package->scope != NULL) {
+        return true;
+    }
+
+    package->scope = scope_create(SCOPE_PACKAGE, NULL, NULL);
+
+    bool is_good = true;
+
+    for (u32 i = 0; i < package->source_files.size; ++i) {
+        SourceFile* source_file = vector_at(package->source_files, i);
+
+        if (!source_file_resolve_symbol_decls(source_file)) {
+            is_good = false;
+        }
+    }
+
+    return is_good;
+}
+
+bool package_bind_symbols(Package* package) {
+    assert(package != NULL);
+
+    bool is_good = true;
+
+    for (u32 i = 0; i < package->source_files.size; ++i) {
+        SourceFile* source_file = vector_at(package->source_files, i);
+
+        if (!source_file_bind_symbols(source_file)) {
+            is_good = false;
+        }
+    }
+
+    return is_good;
 }
