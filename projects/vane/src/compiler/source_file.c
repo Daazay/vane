@@ -132,12 +132,16 @@ bool source_file_parse_ast(SourceFile* source_file) {
     //
 
     while (!is_token_stream_end(&ts)) {
+        const u32 before_idx = ts.idx;
+
         ASTNode* ast = ast_parser_parse_package_entity(&ast_parser);
 
         switch (ast->kind) {
         case AST_NODE_ERROR: {
             is_good = false;
-            token_stream_move_forward(&ts);
+            ast_parser_sync_to_package(&ast_parser);
+            ast_parser_one_step_guard(&ast_parser, before_idx);
+            continue;
         } break;
         case AST_NODE_IMPORT_DECL: {
             const ASTNode* path_node = ast->as.import_decl.path;

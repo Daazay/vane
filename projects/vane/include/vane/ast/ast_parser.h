@@ -13,6 +13,16 @@ struct ASTParser {
 
 ASTParser ast_parser_create(TokenStream* ts);
 
+/*...............................RECOVERY...........................*/
+
+void ast_parser_one_step_guard(ASTParser* ast_parser, const i32 before_idx);
+
+void ast_parser_sync_to_package(ASTParser* ast_parser);
+
+void ast_parser_sync_to_stmt(ASTParser* ast_parser);
+
+void ast_parser_sync_to_list_sep_or_close(ASTParser* ast_parser, TokenKind closing);
+
 /*...............................MISC...............................*/
 
 ASTNode* ast_parser_parse_identifier(ASTParser* ast_parser);

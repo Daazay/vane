@@ -21,25 +21,38 @@ static inline const Token* advance_if(TokenStream* ts, TokenKind expected) {
     return ts_consume_if(ts, expected);
 }
 
-static inline bool is_token_kind_beginning_of_expr(TokenKind kind) {
-    return (kind == TOKEN_IDENTIFIER)  ||
-           (kind == TOKEN_L_BRACE)     ||
-           is_token_kind_literal(kind) ||
-           is_token_kind_prefix_unop(kind);
+static inline bool is_package_entity_start(TokenKind kind) {
+    return (kind == TOKEN_KEYWORD_IMPORT) ||
+           (kind == TOKEN_KEYWORD_TYPE)   ||
+           (kind == TOKEN_KEYWORD_FUN);
 }
 
-static inline bool is_token_kind_beginning_of_stmt(TokenKind kind) {
-    return (kind == TOKEN_KEYWORD_BEGIN)     ||
-           (kind == TOKEN_KEYWORD_TYPE)      ||
-           (kind == TOKEN_KEYWORD_VAR)       ||
-           (kind == TOKEN_KEYWORD_IF)        ||
-           (kind == TOKEN_KEYWORD_WHILE)     ||
-           (kind == TOKEN_KEYWORD_DO)        ||
-           (kind == TOKEN_KEYWORD_BREAK)     ||
-           (kind == TOKEN_KEYWORD_CONTINUE)  ||
-           (kind == TOKEN_KEYWORD_RETURN)    ||
-           (kind == TOKEN_SEMICOLON)         ||
-           is_token_kind_beginning_of_expr(kind);
+static inline bool is_expr_start(TokenKind kind) {
+    return (kind == TOKEN_IDENTIFIER) ||
+        (kind == TOKEN_L_BRACE) ||
+        is_token_kind_literal(kind) ||
+        is_token_kind_prefix_unop(kind);
+}
+
+static inline bool is_stmt_start(TokenKind kind) {
+    return (kind == TOKEN_KEYWORD_BEGIN) ||
+           (kind == TOKEN_KEYWORD_TYPE) ||
+           (kind == TOKEN_KEYWORD_VAR) ||
+           (kind == TOKEN_KEYWORD_IF) ||
+           (kind == TOKEN_KEYWORD_WHILE) ||
+           (kind == TOKEN_KEYWORD_DO) ||
+           (kind == TOKEN_KEYWORD_BREAK) ||
+           (kind == TOKEN_KEYWORD_CONTINUE) ||
+           (kind == TOKEN_KEYWORD_RETURN) ||
+           (kind == TOKEN_SEMICOLON) ||
+           is_expr_start(kind);
+}
+
+/* points at a token that logically closes/branches a block */
+static inline bool is_block_boundary(TokenKind kind) {
+    return (kind == TOKEN_KEYWORD_END)  ||
+           (kind == TOKEN_KEYWORD_ELSE) ||
+           (kind == TOKEN_KEYWORD_LOOP);
 }
 
 static inline ASTNode* ast_node_error_create(ASTNodeKind failed, ASTNode* prev, TokenLoc loc) {
@@ -268,6 +281,89 @@ ASTParser ast_parser_create(TokenStream* ts) {
     return (ASTParser) { .ts = ts, };
 }
 
+/*...............................RECOVERY...........................*/
+
+static inline bool is_guard_stop_token(TokenKind kind) {
+    return (kind == TOKEN_COMMA)     ||
+           (kind == TOKEN_R_BRACE)   ||
+           (kind == TOKEN_R_BRACKET) ||
+           is_block_boundary(kind);
+}
+
+void ast_parser_one_step_guard(ASTParser* ast_parser, const i32 before_idx) {
+    assert(ast_parser != NULL);
+
+    if (is_token_stream_end(ast_parser->ts)) {
+        return;
+    }
+
+    if (ast_parser->ts->idx == before_idx) {
+        const Token* next = token_stream_peek_next(ast_parser->ts);
+        if (next != NULL && is_guard_stop_token(next->kind)) {
+            return;
+        }
+
+        token_stream_move_forward(ast_parser->ts);
+        const Token* curr = token_stream_get_curr(ast_parser->ts);
+
+        if (curr != NULL) {
+            PARSE_NOTE_AT(ast_parser->ts, curr->loc, "skipped one token '%s' to continue after error", TK_NAME(curr->kind));
+        }
+    }
+}
+
+void ast_parser_sync_to_package(ASTParser* ast_parser) {
+    assert(ast_parser != NULL);
+
+    const Token* t = token_stream_peek_next(ast_parser->ts);
+    bool skipped_any = false;
+
+    while (!is_token_stream_end(ast_parser->ts) && !is_package_entity_start(t->kind)) {
+        token_stream_move_forward(ast_parser->ts);
+        skipped_any = true;
+        t = token_stream_peek_next(ast_parser->ts);
+    }
+    if (skipped_any && !is_token_stream_end(ast_parser->ts)) {
+        PARSE_NOTE_AT(ast_parser->ts, t->loc, "recovered to next package entity '%s'", TK_NAME(t->kind));
+    }
+}
+
+void ast_parser_sync_to_stmt(ASTParser* ast_parser) {
+    assert(ast_parser != NULL);
+
+    const Token* t = token_stream_peek_next(ast_parser->ts);
+    bool skipped_any = false;
+
+    while (!is_token_stream_end(ast_parser->ts) && !is_stmt_start(t->kind) && !is_block_boundary(t->kind)) {
+        token_stream_move_forward(ast_parser->ts);
+        skipped_any = true;
+        t = token_stream_peek_next(ast_parser->ts);
+    }
+    if (skipped_any && !is_token_stream_end(ast_parser->ts)) {
+        PARSE_NOTE_AT(ast_parser->ts, t->loc, "recovered to '%s'", TK_NAME(t->kind));
+    }
+}
+
+void ast_parser_sync_to_list_sep_or_close(ASTParser* ast_parser, TokenKind closing) {
+    assert(ast_parser != NULL);
+
+    const Token* t = token_stream_peek_next(ast_parser->ts);
+    bool skipped_any = false;
+
+    while (!is_token_stream_end(ast_parser->ts) && t->kind != TOKEN_COMMA && t->kind != closing) {
+        token_stream_move_forward(ast_parser->ts);
+        skipped_any = true;
+        t = token_stream_peek_next(ast_parser->ts);
+    }
+    if (skipped_any && !is_token_stream_end(ast_parser->ts)) {
+        const char* what = (t->kind == TOKEN_COMMA) ? "comma"
+                           : (t->kind == closing)   ? "closing"
+                                                    : "token";
+
+        PARSE_NOTE_AT(ast_parser->ts, t->loc, "recovered to %s '%s'", what, TK_NAME(t->kind));
+    }
+}
+
 /*...............................MISC...............................*/
 
 ASTNode* ast_parser_parse_identifier(ASTParser* ast_parser) {
@@ -428,14 +524,17 @@ ASTNode* ast_parser_parse_typeref_fun(ASTParser* ast_parser) {
 
     token = token_stream_peek_next(ast_parser->ts);
     while (!is_token_stream_end(ast_parser->ts) && token->kind != TOKEN_R_BRACE) {
+        const i32 before_idx = ast_parser->ts->idx;
+
         ASTNode* param = ast_parser_parse_typeref_fun_param(ast_parser);
         loc.end = param->loc.end;
-        if (param->kind == AST_NODE_ERROR) {
-            vector_destroy(&params);
-            return ast_node_error_create(AST_NODE_TYPEREF_FUN, param, loc);
-        }
 
         vector_push_back(&params, &param);
+
+        if (param->kind == AST_NODE_ERROR) {
+            ast_parser_sync_to_list_sep_or_close(ast_parser, TOKEN_R_BRACE);
+            ast_parser_one_step_guard(ast_parser, before_idx);
+        }
 
         token = token_stream_peek_next(ast_parser->ts);
         if (token->kind == TOKEN_COMMA) {
@@ -580,6 +679,7 @@ ASTNode* ast_parser_parse_fun_sign(ASTParser* ast_parser) {
 
         ASTNode* param = ast_parser_parse_fun_param(ast_parser);
         loc.end = param->loc.end;
+
         if (param->kind == AST_NODE_ERROR) {
             ast_node_destroy(id);
             vector_destroy(&params);
@@ -657,14 +757,16 @@ ASTNode* ast_parser_parse_fun_decl(ASTParser* ast_parser) {
     }
     else {
         while (!is_token_stream_end(ast_parser->ts) && token_stream_peek_next(ast_parser->ts)->kind != TOKEN_KEYWORD_END) {
+            const i32 before_idx = ast_parser->ts->idx;
+
             ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
             loc.end = stmt->loc.end;
 
             vector_push_back(&block, &stmt);
 
-            // Simple recovery
             if (stmt->kind == AST_NODE_ERROR) {
-                token_stream_move_forward(ast_parser->ts);
+                ast_parser_sync_to_stmt(ast_parser);
+                ast_parser_one_step_guard(ast_parser, before_idx);
             }
         }
 
@@ -688,7 +790,7 @@ ASTNode* ast_parser_parse_stmt(ASTParser* ast_parser) {
 
     const Token* token = token_stream_peek_next(ast_parser->ts);
 
-    if (is_token_kind_beginning_of_stmt(token->kind)) {
+    if (is_stmt_start(token->kind)) {
         switch (token->kind) {
         case TOKEN_KEYWORD_BEGIN:    return ast_parser_parse_stmt_block(ast_parser);
         case TOKEN_KEYWORD_TYPE:     return ast_parser_parse_stmt_typealias_decl(ast_parser);
@@ -761,14 +863,16 @@ ASTNode* ast_parser_parse_stmt_block(ASTParser* ast_parser) {
     Vector block = vector_create(4, VECTOR_SPECS(ASTNode*, &ast_node_destroy));
 
     while (!is_token_stream_end(ast_parser->ts) && token_stream_peek_next(ast_parser->ts)->kind != TOKEN_KEYWORD_END) {
+        const i32 before_idx = ast_parser->ts->idx;
+
         ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
         loc.end = stmt->loc.end;
 
         vector_push_back(&block, &stmt);
 
-        // Simple recovery
         if (stmt->kind == AST_NODE_ERROR) {
-            token_stream_move_forward(ast_parser->ts);
+            ast_parser_sync_to_stmt(ast_parser);
+            ast_parser_one_step_guard(ast_parser, before_idx);
         }
     }
 
@@ -920,14 +1024,16 @@ ASTNode* ast_parser_parse_stmt_branch(ASTParser* ast_parser, bool start_with_els
             break;
         }
 
+        const i32 before_idx = ast_parser->ts->idx;
+
         ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
         loc.end = stmt->loc.end;
 
         vector_push_back(&block, &stmt);
 
-        // Simple recovery
         if (stmt->kind == AST_NODE_ERROR) {
-            token_stream_move_forward(ast_parser->ts);
+            ast_parser_sync_to_stmt(ast_parser);
+            ast_parser_one_step_guard(ast_parser, before_idx);
         }
     }
 
@@ -1032,13 +1138,15 @@ ASTNode* ast_parser_parse_stmt_while(ASTParser* ast_parser) {
             break;
         }
 
+        const i32 before_idx = ast_parser->ts->idx;
+
         ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
         loc.end = stmt->loc.end;
         vector_push_back(&block, &stmt);
 
-        // Simple recovery
         if (stmt->kind == AST_NODE_ERROR) {
-            token_stream_move_forward(ast_parser->ts);
+            ast_parser_sync_to_stmt(ast_parser);
+            ast_parser_one_step_guard(ast_parser, before_idx);
         }
     }
 
@@ -1072,14 +1180,16 @@ ASTNode* ast_parser_parse_stmt_do(ASTParser* ast_parser) {
             break;
         }
 
+        const i32 before_idx = ast_parser->ts->idx;
+
         ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
         loc.end = stmt->loc.end;
 
         vector_push_back(&block, &stmt);
 
-        // Simple recovery
         if (stmt->kind == AST_NODE_ERROR) {
-            token_stream_move_forward(ast_parser->ts);
+            ast_parser_sync_to_stmt(ast_parser);
+            ast_parser_one_step_guard(ast_parser, before_idx);
         }
     }
 
@@ -1195,7 +1305,7 @@ ASTNode* ast_parser_parse_expr_with_prec(ASTParser* ast_parser, OpPrecedence pre
 
         OpPrecedence new_prec = get_token_kind_precedence(token->kind);
         if (new_prec <= prec) {
-            if (is_token_kind_beginning_of_expr(token->kind)) {
+            if (is_expr_start(token->kind)) {
                 TokenLoc loc = node->loc;
                 loc.end = token->loc.end;
 
@@ -1400,13 +1510,11 @@ ASTNode* ast_parser_parse_expr_call(ASTParser* ast_parser, ASTNode* callee) {
         ASTNode* arg = ast_parser_parse_expr_with_prec(ast_parser, OP_PREC_NONE);
         loc.end = arg->loc.end;
 
-        if (arg->kind == AST_NODE_ERROR) {
-            vector_destroy(&args);
-            ast_node_destroy(callee);
-            return ast_node_error_create(AST_NODE_EXPR_CALL, arg, loc);
-        }
-
         vector_push_back(&args, &arg);
+
+        if (arg->kind == AST_NODE_ERROR) {
+            ast_parser_sync_to_list_sep_or_close(ast_parser, TOKEN_R_BRACE);
+        }
 
         token = token_stream_peek_next(ast_parser->ts);
         if (token->kind == TOKEN_COMMA) {
