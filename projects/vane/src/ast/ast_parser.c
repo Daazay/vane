@@ -660,13 +660,12 @@ ASTNode* ast_parser_parse_fun_decl(ASTParser* ast_parser) {
             ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
             loc.end = stmt->loc.end;
 
-            if (stmt->kind == AST_NODE_ERROR) {
-                ast_node_destroy(sign);
-                vector_destroy(&block);
-                return ast_node_error_create(AST_NODE_FUN_DECL, stmt, loc);
-            }
-
             vector_push_back(&block, &stmt);
+
+            // Simple recovery
+            if (stmt->kind == AST_NODE_ERROR) {
+                token_stream_move_forward(ast_parser->ts);
+            }
         }
 
         token = advance_if(ast_parser->ts, TOKEN_KEYWORD_END);
@@ -765,12 +764,12 @@ ASTNode* ast_parser_parse_stmt_block(ASTParser* ast_parser) {
         ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
         loc.end = stmt->loc.end;
 
-        if (stmt->kind == AST_NODE_ERROR) {
-            vector_destroy(&block);
-            return ast_node_error_create(AST_NODE_STMT_BLOCK, stmt, loc);
-        }
-
         vector_push_back(&block, &stmt);
+
+        // Simple recovery
+        if (stmt->kind == AST_NODE_ERROR) {
+            token_stream_move_forward(ast_parser->ts);
+        }
     }
 
     token = advance_if(ast_parser->ts, TOKEN_KEYWORD_END);
@@ -924,13 +923,12 @@ ASTNode* ast_parser_parse_stmt_branch(ASTParser* ast_parser, bool start_with_els
         ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
         loc.end = stmt->loc.end;
 
-        if (stmt->kind == AST_NODE_ERROR) {
-            ast_node_destroy(expr);
-            vector_destroy(&block);
-            return ast_node_error_create(AST_NODE_STMT_BRANCH, stmt, loc);
-        }
-
         vector_push_back(&block, &stmt);
+
+        // Simple recovery
+        if (stmt->kind == AST_NODE_ERROR) {
+            token_stream_move_forward(ast_parser->ts);
+        }
     }
 
     if (is_else_br) {
@@ -1036,13 +1034,12 @@ ASTNode* ast_parser_parse_stmt_while(ASTParser* ast_parser) {
 
         ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
         loc.end = stmt->loc.end;
-        if (stmt->kind == AST_NODE_ERROR) {
-            ast_node_destroy(expr);
-            vector_destroy(&block);
-            return ast_node_error_create(AST_NODE_STMT_WHILE, stmt, loc);
-        }
-
         vector_push_back(&block, &stmt);
+
+        // Simple recovery
+        if (stmt->kind == AST_NODE_ERROR) {
+            token_stream_move_forward(ast_parser->ts);
+        }
     }
 
     token = advance_if(ast_parser->ts, TOKEN_KEYWORD_END);
@@ -1078,12 +1075,12 @@ ASTNode* ast_parser_parse_stmt_do(ASTParser* ast_parser) {
         ASTNode* stmt = ast_parser_parse_stmt(ast_parser);
         loc.end = stmt->loc.end;
 
-        if (stmt->kind == AST_NODE_ERROR) {
-            vector_destroy(&block);
-            return ast_node_error_create(AST_NODE_STMT_DO, stmt, loc);
-        }
-
         vector_push_back(&block, &stmt);
+
+        // Simple recovery
+        if (stmt->kind == AST_NODE_ERROR) {
+            token_stream_move_forward(ast_parser->ts);
+        }
     }
 
     token = advance_if(ast_parser->ts, TOKEN_KEYWORD_LOOP);
@@ -1190,6 +1187,8 @@ ASTNode* ast_parser_parse_expr_with_prec(ASTParser* ast_parser, OpPrecedence pre
 
     const Token* token = token_stream_peek_next(ast_parser->ts);
     while (!is_token_stream_end(ast_parser->ts)) {
+        // a = 4
+        // b = 4
         if (IS_FLAG_SET(token->flags, TOKEN_FLAG_FIRST_IN_LINE)) {
             break;
         }
