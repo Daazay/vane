@@ -18,7 +18,7 @@ typedef struct ImportEntry ImportEntry;
 struct ImportEntry {
     StringView name;
 
-    const ASTNode* node;
+    ASTNode* node;
     struct Package* target;
 
     StringView collection_name;

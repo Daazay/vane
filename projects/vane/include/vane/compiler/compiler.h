@@ -4,6 +4,8 @@
 #include "vane/utils/string.h"
 #include "vane/utils/hashmap.h"
 
+#include "vane/sema/type_system.h"
+
 #include "vane/compiler/build_options.h"
 #include "vane/compiler/package.h"
 
@@ -30,6 +32,11 @@ struct Compiler {
     Package* entry_point;
 
     ReportCollector rc;
+
+    // visible to all packages
+    struct Scope* global_scope;
+
+    TypeSystem ts;
 };
 
 Compiler compiler_create(BuildOptions* build_options);
@@ -44,6 +51,8 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath);
 
 Package* compiler_try_resolve_imported_package(Compiler* compiler, SourceFile* source_file, StringView collection_name, StringView package_path);
 
+Package* compiler_load_core_collection(Compiler * compiler);
+
 // dump functions
 
 void compiler_dump_ast(const Compiler* compiler);
@@ -52,6 +61,10 @@ void compiler_dump_ast_dot(const Compiler* compiler);
 
 void compiler_dump_symbols(const Compiler* compiler);
 
+void compiler_dump_types(const Compiler* compiler);
+
+//
+
 bool compiler_parse_source_files(Compiler* compiler);
 
 bool compiler_resolve_imports(Compiler* compiler);
@@ -59,3 +72,5 @@ bool compiler_resolve_imports(Compiler* compiler);
 bool compiler_resolve_symbol_decls(Compiler* compiler);
 
 bool compiler_bind_symbols(Compiler* compiler);
+
+bool compiler_resolve_types(Compiler* compiler);

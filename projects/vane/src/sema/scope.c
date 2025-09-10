@@ -4,6 +4,7 @@
 
 const char* scope_kind_get_name(ScopeKind kind) {
     switch (kind) {
+    case SCOPE_GLOBAL:      return "global";
     case SCOPE_PACKAGE:     return "package";
     case SCOPE_SOURCE_FILE: return "source_file";
     case SCOPE_FUNCTION:    return "function";
@@ -81,11 +82,39 @@ Symbol* scope_lookup(const Scope* scope, StringView name) {
         symbol = scope_lookup_current(it, name);
 
         if (symbol != NULL) {
-            break;
+            return symbol;
         }
 
         it = it->parent;
     }
 
-    return symbol;
+    return NULL;
+}
+
+bool scope_resolve_types(const Scope* scope, struct TypeSystem* ts, struct ReportCollector* rc) {
+    assert(scope != NULL && ts != NULL && rc != NULL);
+
+    bool status = true;
+
+    HashmapIterator it = hashmap_get_it(&scope->symbols);
+    StringView key = STRING_VIEW_EMPTY;
+    Symbol* sym = NULL;
+
+    while (hashmap_it_next(&it, &key, &sym)) {
+        if (sym == NULL) {
+            continue;
+        }
+        if (!symbol_resolve_type(sym, ts, rc)) {
+            status = false;
+        }
+    }
+
+    for (u32 i = 0; i < scope->scopes.size; ++i) {
+        Scope* child = vector_at(scope->scopes, i);
+        if (!scope_resolve_types(child, ts, rc)) {
+            status = false;
+        }
+    }
+
+    return status;
 }

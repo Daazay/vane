@@ -19,6 +19,8 @@ Package* package_create(StringView path) {
         VECTOR_SPECS(const Package*, NULL)
     );
 
+    package->is_core = false;
+
     return package;
 }
 
@@ -30,19 +32,19 @@ void package_destroy(Package* package) {
     vector_destroy(&package->source_files);
     vector_destroy(&package->subpackages);
 
-    scope_destroy(package->scope);
+    //scope_destroy(package->scope);B
 
     free(package);
 }
 
-bool package_resolve_symbol_decls(Package* package) {
+bool package_resolve_symbol_decls(Package* package, Scope* global_scope) {
     assert(package != NULL);
 
     if (package->scope != NULL) {
         return true;
     }
 
-    package->scope = scope_create(SCOPE_PACKAGE, NULL, NULL);
+    package->scope = scope_create(SCOPE_PACKAGE, global_scope, NULL);
 
     bool is_good = true;
 

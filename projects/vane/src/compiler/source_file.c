@@ -445,10 +445,22 @@ static inline void bind_symbols_pre_fn(ASTNode* parent, ASTNode* node, void* dat
         }
 
         StringView name = string_get_view(node->as.expr_place.value);
-        Symbol* sym = scope_lookup(ctx->scope, name);   // upward lookup
+        Symbol* sym = scope_lookup(ctx->scope, name);
         if (sym != NULL) {
             node->symbol = sym;
         }
+    } break;
+
+    case AST_NODE_TYPEREF_CUSTOM: {
+        StringView name = string_get_view(node->as.typeref_custom.value);
+
+        Symbol* sym = scope_lookup(ctx->scope, name);
+        if (sym == NULL) {
+            REPORT_ERROR_LOC(ctx->rc, "sema", node->loc, "unresolved identifier '" SV_FMT "'.", SV_ARG(name));
+            ctx->status = false;
+            break;
+        }
+        node->symbol = sym;
     } break;
 
     case AST_NODE_FUN_DECL:

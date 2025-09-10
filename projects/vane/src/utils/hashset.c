@@ -253,7 +253,7 @@ bool hashset_contains(const Hashset* set, const void* item) {
     return hashset_find_entry(set, item) != NULL;
 }
 
-const void* hashset_at(const Hashset* set, const void* item) {
+const void* hashset_get(const Hashset* set, const void* item) {
     assert(set != NULL);
     assert(set->item_specs.is_ptr || (item != NULL && "item can be NULL only if item type is ptr"));
 

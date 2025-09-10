@@ -5,7 +5,12 @@
 
 #include "vane/scanner/token_loc.h"
 
+struct Type;
+struct TypeSystem;
+struct ReportCollector;
 struct ASTNode;
+enum TypeResolveState;
+
 typedef enum SymbolKind SymbolKind;
 typedef struct Symbol Symbol;
 
@@ -24,13 +29,14 @@ struct Symbol {
     StringView name;
 
     struct Scope* scope;
-    const struct ASTNode* ast;
+    struct ASTNode* ast;
 
     union {
         struct {
             struct Package* target;
         } import;
         struct {
+            enum TypeResolveState type_state;
             struct Type* type;
         } typed;
     } as;
@@ -38,6 +44,8 @@ struct Symbol {
 
 const char* symbol_kind_get_name(SymbolKind kind);
 
-Symbol* symbol_create(SymbolKind kind, StringView name, const struct ASTNode* ast);
+Symbol* symbol_create(SymbolKind kind, StringView name, struct ASTNode* ast);
 
 void symbol_destroy(Symbol* symbol);
+
+bool symbol_resolve_type(Symbol* symbol, struct TypeSystem* ts, struct ReportCollector* rc);

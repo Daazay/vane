@@ -42,6 +42,7 @@ struct BuildOptions {
     bool dump_ast;
     bool dump_ast_dot;
     bool dump_symbols;
+    bool dump_types;
     bool werror;
 };
 

@@ -9,6 +9,8 @@
 #include "vane/ast/ast_visitor/ast_dot_printer.h"
 #include "vane/ast/ast_visitor/ast_simple_printer.h"
 
+#include "vane/sema/scope.h"
+
 Compiler compiler_create(BuildOptions* build_options) {
     assert(build_options != NULL);
 
@@ -26,6 +28,9 @@ Compiler compiler_create(BuildOptions* build_options) {
     );
 
     compiler.entry_point = NULL;
+    compiler.global_scope = scope_create(SCOPE_GLOBAL, NULL, NULL);
+
+    compiler.ts = (TypeSystem) { 0 };
 
     compiler.rc = report_collector_create(build_options->log_verbosity);
 
@@ -40,6 +45,9 @@ void compiler_destroy(Compiler* compiler) {
     hashmap_destroy(&compiler->packages);
     hashmap_destroy(&compiler->source_files);
 
+    scope_destroy(compiler->global_scope);
+
+    type_system_destroy(&compiler->ts);
     report_collector_destroy(&compiler->rc);
 }
 
@@ -62,10 +70,14 @@ enum CompilerPipelineStage {
     COMPILER_PIPE_RESOLVE_IMPORTS,
     COMPILER_PIPE_RESOLVE_SYMBOLS,
     COMPILER_PIPE_BIND_SYMBOLS,
+    COMPILER_PIPE_RESOLVE_TYPES,
 };
 
 static inline bool compiler_run_upto(Compiler* compiler, CompilerPipelineStage stage) {
     assert(compiler != NULL);
+
+    Package* core_package = compiler_load_core_collection(compiler);
+    (void)core_package;
 
     if (!compiler_parse_source_files(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_PARSE_AST) return !compiler_should_halt(compiler);
@@ -73,11 +85,16 @@ static inline bool compiler_run_upto(Compiler* compiler, CompilerPipelineStage s
     if (!compiler_resolve_imports(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_IMPORTS) return !compiler_should_halt(compiler);
 
+    // Declare
+
     if (!compiler_resolve_symbol_decls(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_SYMBOLS) return !compiler_should_halt(compiler);
 
     if (!compiler_bind_symbols(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_BIND_SYMBOLS) return !compiler_should_halt(compiler);
+
+    if (!compiler_resolve_types(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_TYPES) return !compiler_should_halt(compiler);
 
     return !compiler_should_halt(compiler);
 }
@@ -109,7 +126,7 @@ bool compiler_run_command(Compiler* compiler) {
         break;
 
     case BUILD_COMMAND_BUILD:
-        status = compiler_run_upto(compiler, COMPILER_PIPE_BIND_SYMBOLS);
+        status = compiler_run_upto(compiler, COMPILER_PIPE_RESOLVE_TYPES);
         break;
 
     default:
@@ -131,7 +148,9 @@ bool compiler_run_command(Compiler* compiler) {
     if (compiler->build_options->dump_symbols) {
         compiler_dump_symbols(compiler);
     }
-
+    if (compiler->build_options->dump_types) {
+        compiler_dump_types(compiler);
+    }
     return true;
 }
 
@@ -277,6 +296,28 @@ Package* compiler_try_resolve_imported_package(Compiler* compiler, SourceFile* s
     string_destroy(&import_path);
 
     return package;
+}
+
+Package* compiler_load_core_collection(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    StringView key = STR_LIT("vane_core");
+    StringView core_path = compiler_get_collection_path(compiler, key);
+    if (is_string_view_empty(core_path)) {
+        REPORT_NOTE(&compiler->rc, "driver", "no 'vane_core' collection configured; skipping core prelude.");
+        return NULL;
+    }
+
+    REPORT_INFO(&compiler->rc, "driver", "loading core collection from '"SV_FMT"'.", SV_ARG(core_path));
+
+    Package* core_package = compiler_load_package(compiler, core_path);
+    if (core_package == NULL) {
+        REPORT_ERROR(&compiler->rc, "driver", "failed to load core collection from '"SV_FMT"'.", SV_ARG(core_path));
+        return NULL;
+    }
+
+    core_package->is_core = true;
+    return core_package;
 }
 
 void compiler_dump_ast(const Compiler* compiler) {
@@ -458,6 +499,273 @@ void compiler_dump_symbols(const Compiler* compiler) {
     }
 }
 
+static void print_type_inline_alias(const Type* t);
+static void print_type_inline_canonical(const Type* t);
+
+/* Returns builtin name for comparison/printing; NULL if not a builtin we name directly. */
+static const char* builtin_kind_name(const Type* t) {
+    if (!t || t->kind != TYPE_BUILTIN) return NULL;
+    switch (t->as.builtin.kind) {
+    case TYPE_BUILTIN_VOID: return "void";
+    case TYPE_BUILTIN_BOOL: return "bool";
+    case TYPE_BUILTIN_U8:   return "u8";
+    case TYPE_BUILTIN_I8:   return "i8";
+    case TYPE_BUILTIN_U16:  return "u16";
+    case TYPE_BUILTIN_I16:  return "i16";
+    case TYPE_BUILTIN_U32:  return "u32";
+    case TYPE_BUILTIN_I32:  return "i32";
+    case TYPE_BUILTIN_U64:  return "u64";
+    case TYPE_BUILTIN_I64:  return "i64";
+    case TYPE_BUILTIN_ANY:  return "any";
+    default: return NULL;
+    }
+}
+
+/* Follow alias chain to a non-alias canonical type (but do not loop forever). */
+static const Type* type_canonical(const Type* t) {
+    const u32 kMaxDepth = 256;
+    u32 depth = 0;
+    while (t && t->kind == TYPE_ALIAS && depth++ < kMaxDepth) {
+        t = t->as.alias.target;
+    }
+    return t;
+}
+
+/* Print function type canonical: params/ret are canonical too. */
+static void print_fun_type_canonical(const Type* t) {
+    putchar('(');
+    for (u32 i = 0; i < t->as.fun.param_count; ++i) {
+        if (i) printf(", ");
+        print_type_inline_canonical(t->as.fun.params[i]);
+    }
+    printf(") -> ");
+    print_type_inline_canonical(t->as.fun.ret);
+}
+
+/* Print function type alias-friendly: keep aliases on the LHS view. */
+static void print_fun_type_alias(const Type* t) {
+    putchar('(');
+    for (u32 i = 0; i < t->as.fun.param_count; ++i) {
+        if (i) printf(", ");
+        print_type_inline_alias(t->as.fun.params[i]);
+    }
+    printf(") -> ");
+    print_type_inline_alias(t->as.fun.ret);
+}
+
+/* Canonical printer: expands aliases entirely. */
+static void print_type_inline_canonical(const Type* t) {
+    if (!t) { printf("<null>"); return; }
+
+    const Type* c = type_canonical(t);
+    if (!c) { printf("<null>"); return; }
+
+    switch (c->kind) {
+    case TYPE_UNRESOLVED:
+        printf("<unresolved " SV_FMT ">", SV_ARG(c->as.unresolved.name));
+        return;
+
+    case TYPE_BUILTIN: {
+        const char* name = builtin_kind_name(c);
+        if (name) { printf("%s", name); }
+        else { printf("<builtin:%u>", (unsigned)c->as.builtin.kind); }
+        return;
+    }
+
+    case TYPE_POINTER:
+        putchar('^'); print_type_inline_canonical(c->as.pointer.base); return;
+
+    case TYPE_ARRAY:
+        printf("[%u]", (unsigned)c->as.array.size);
+        print_type_inline_canonical(c->as.array.elem);
+        return;
+
+    case TYPE_SLICE:
+        printf("[]");
+        print_type_inline_canonical(c->as.slice.elem);
+        return;
+
+    case TYPE_FUNCTION:
+        print_fun_type_canonical(c);
+        return;
+
+    case TYPE_ALIAS:
+        // Canonical view should never end here, but handle gracefully:
+        print_type_inline_canonical(c->as.alias.target);
+        return;
+
+    default:
+        printf("<type kind:%u>", (unsigned)c->kind);
+        return;
+    }
+}
+
+/* Alias-friendly printer: keep aliases where encountered, but when we show
+   an alias’s target (the RHS after "(= "), print it CANONICALLY (fully expanded)
+   to avoid chains like "int (= int (= i32))". */
+static void print_type_inline_alias(const Type* t) {
+    if (!t) { printf("<null>"); return; }
+
+    switch (t->kind) {
+    case TYPE_UNRESOLVED:
+        printf("<unresolved " SV_FMT ">", SV_ARG(t->as.unresolved.name));
+        return;
+
+    case TYPE_BUILTIN: {
+        const char* name = builtin_kind_name(t);
+        if (name) { printf("%s", name); }
+        else { printf("<builtin:%u>", (unsigned)t->as.builtin.kind); }
+        return;
+    }
+
+    case TYPE_POINTER:
+        putchar('^'); print_type_inline_alias(t->as.pointer.base); return;
+
+    case TYPE_ARRAY:
+        printf("[%u]", (unsigned)t->as.array.size);
+        print_type_inline_alias(t->as.array.elem);
+        return;
+
+    case TYPE_SLICE:
+        printf("[]");
+        print_type_inline_alias(t->as.slice.elem);
+        return;
+
+    case TYPE_FUNCTION:
+        print_fun_type_alias(t);
+        return;
+
+    case TYPE_ALIAS: {
+        // Print alias name as-is.
+        printf(SV_FMT, SV_ARG(t->as.alias.name));
+
+        // If alias is effectively a self-alias (e.g., "u8 = u8"), suppress " (= ...)" noise.
+        const Type* tgt = t->as.alias.target;
+        const char* tgt_builtin = builtin_kind_name(type_canonical(tgt));
+
+        // Compare alias name with canonical builtin name if any.
+        bool self_like = false;
+        if (tgt_builtin) {
+            StringView alias_name = t->as.alias.name;
+            if (string_view_eq_sv(alias_name, string_view_from_cstr(tgt_builtin))) {
+                self_like = true;
+            }
+        }
+        if (!self_like) {
+            printf(" (= ");
+            print_type_inline_canonical(tgt);   // de-alias RHS
+            putchar(')');
+        }
+        return;
+    }
+
+    default:
+        printf("<type kind:%u>", (unsigned)t->kind);
+        return;
+    }
+}
+
+/* Wrapper to match your existing calls */
+static void print_type_inline(const Type* t) {
+    print_type_inline_alias(t);
+}
+
+// ---------- dump “types per symbol” the same way you dump symbols ----------
+
+static void compiler_dump_scope_types(const Scope* scope, u32 indent_lvl, bool as_list_item) {
+    if (!scope) {
+        indent(indent_lvl); puts("kind: unknown"); return;
+    }
+
+    // put "kind" on the correct line (mirrors compiler_dump_scope)
+    if (as_list_item) {
+        indent(indent_lvl); printf("- kind: %s\n", scope_kind_get_name(scope->kind));
+    }
+    else {
+        indent(indent_lvl); printf("kind: %s\n", scope_kind_get_name(scope->kind));
+    }
+
+    const u32 base = indent_lvl + (as_list_item ? 1u : 0u);
+
+    // label (function name) if applicable
+    if (scope->kind == SCOPE_FUNCTION && scope->ast && scope->ast->symbol) {
+        indent(base); printf("name: " SV_FMT "\n", SV_ARG(scope->ast->symbol->name));
+    }
+
+    // print symbol types
+    {
+        bool has_symbols = (scope->symbols.size > 0);
+        indent(base); puts("symbol_types:");
+        if (!has_symbols) {
+            indent(base + 1); puts("[]");
+        }
+        else {
+            HashmapIterator it = hashmap_get_it(&scope->symbols);
+            StringView key = STRING_VIEW_EMPTY;
+            Symbol* sym = NULL;
+            while (hashmap_it_next(&it, &key, &sym)) {
+                if (!sym) continue;
+                indent(base + 1);
+                printf("- { kind: %s, name: " SV_FMT, symbol_kind_get_name(sym->kind), SV_ARG(sym->name));
+
+                // location if available
+                if (sym->ast) {
+                    printf(", loc: ");
+                    print_loc(sym->ast->loc);
+                }
+
+                // type if available
+                printf(", type: ");
+                if (sym->kind == SYMBOL_IMPORT) {
+                    printf("<n/a>");
+                }
+                else if (sym->as.typed.type) {
+                    print_type_inline(sym->as.typed.type);
+                }
+                else {
+                    printf("<unset>");
+                }
+                puts(" }");
+            }
+        }
+    }
+
+    // recurse into child scopes
+    {
+        bool has_scopes = (scope->scopes.size > 0);
+        indent(base); puts("scopes:");
+        if (!has_scopes) {
+            indent(base + 1); puts("[]");
+        }
+        else {
+            for (u32 i = 0; i < scope->scopes.size; ++i) {
+                const Scope* child = vector_at(scope->scopes, i);
+                compiler_dump_scope_types(child, base + 1, true);
+            }
+        }
+    }
+}
+
+static void compiler_dump_package_types(const Package* package) {
+    if (!package || !package->scope) return;
+    printf("package: " SV_FMT "\n", SV_ARG(package->path));
+    puts("scope:");
+    compiler_dump_scope_types(package->scope, 1, false);
+    putchar('\n');
+}
+
+void compiler_dump_types(const Compiler* compiler) {
+    assert(compiler != NULL);
+
+    HashmapIterator it = hashmap_get_it(&compiler->packages);
+    Package* pkg = NULL;
+
+    while (hashmap_it_next(&it, NULL, &pkg)) {
+        if (!pkg || !pkg->scope) continue;
+        compiler_dump_package_types(pkg);
+    }
+}
+
 bool compiler_parse_source_files(Compiler* compiler) {
     assert(compiler != NULL);
 
@@ -512,7 +820,7 @@ bool compiler_resolve_symbol_decls(Compiler* compiler) {
             continue;
         }
 
-        if (!package_resolve_symbol_decls(package)) {
+        if (!package_resolve_symbol_decls(package, compiler->global_scope)) {
             status = false;
         }
     }
@@ -534,6 +842,28 @@ bool compiler_bind_symbols(Compiler* compiler) {
         }
 
         if (!package_bind_symbols(package)) {
+            status = false;
+        }
+    }
+
+    return status;
+}
+
+bool compiler_resolve_types(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    type_system_init(&compiler->ts, target_infos[TARGET_ARCH_X86_64]);
+
+    bool status = true;
+
+    HashmapIterator it = hashmap_get_it(&compiler->packages);
+    Package* package = NULL;
+
+    while (hashmap_it_next(&it, NULL, &package)) {
+        if (package == NULL || package->scope == NULL) {
+            continue;
+        }
+        if (!scope_resolve_types(package->scope, &compiler->ts, &compiler->rc)) {
             status = false;
         }
     }

@@ -25,12 +25,14 @@ struct Package {
 
     Scope* scope;
     Package* parent_package;
+
+    bool is_core;
 };
 
 Package* package_create(StringView path);
 
 void package_destroy(Package* package);
 
-bool package_resolve_symbol_decls(Package* package);
+bool package_resolve_symbol_decls(Package* package, Scope* global_scope);
 
 bool package_bind_symbols(Package* package);

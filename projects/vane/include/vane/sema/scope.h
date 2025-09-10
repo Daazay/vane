@@ -10,6 +10,9 @@
 
 #include "vane/sema/symbol.h"
 
+struct TypeSystem;
+struct ReportCollector;
+
 typedef struct Scope Scope;
 typedef enum ScopeKind ScopeKind;
 
@@ -18,6 +21,7 @@ typedef enum ScopeKind ScopeKind;
 
 enum ScopeKind {
     SCOPE_UNKNOWN = 0,
+    SCOPE_GLOBAL,
     SCOPE_PACKAGE,
     SCOPE_SOURCE_FILE,
     SCOPE_FUNCTION,
@@ -45,3 +49,5 @@ void scope_add_symbol(Scope* scope, Symbol* symbol);
 Symbol* scope_lookup_current(const Scope* scope, StringView name);
 
 Symbol* scope_lookup(const Scope* scope, StringView name);
+
+bool scope_resolve_types(const Scope* scope, struct TypeSystem* ts, struct ReportCollector* rc);

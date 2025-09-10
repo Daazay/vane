@@ -1,5 +1,11 @@
 ﻿import "math"
 
+type i32 = i32
+type u8  = u8
+
+type int = i32
+type string = []u8
+
 fun main(args: []string): int
     var n: int = 5
     var result = math.fib(n)

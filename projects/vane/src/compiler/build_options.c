@@ -204,6 +204,12 @@ static bool handle_dump_symbols(ArgParser* parser, const char* value) {
     return true;
 }
 
+static bool handle_dump_types(ArgParser* parser, const char* value) {
+    (void)parser; (void)value;
+    parser->options->dump_types = true;
+    return true;
+}
+
 static bool handle_werror(ArgParser* parser, const char* value) {
     (void)parser; (void)value;
     parser->options->werror = true;
@@ -230,6 +236,7 @@ static OptionSpec build_parse_options[] = {
     { "dump-ast",     0, false, &handle_dump_ast,     "Dump AST for each file." },
     { "dump-ast-dot", 0, false, &handle_dump_ast_dot, "Dump Graphviz DOT of AST for each file." },
     { "dump-symbols", 0, false, &handle_dump_symbols, "Dump symtables." },
+    { "dump-types",   0, false, &handle_dump_types,   "Dump types." },
 };
 
 static CommandSpec commands[] = {
