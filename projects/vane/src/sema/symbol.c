@@ -5,8 +5,8 @@
 const char* symbol_kind_get_name(SymbolKind kind) {
     switch (kind) {
     case SYMBOL_IMPORT:    return "import";
-    case SYMBOL_TYPEALIAS: return "typealias";
-    case SYMBOL_FUNCTION:  return "function";
+    case SYMBOL_TYPEALIAS: return "type";
+    case SYMBOL_FUNCTION:  return "func";
     case SYMBOL_PARAMETER: return "param";
     case SYMBOL_VARIABLE:  return "var";
     default:

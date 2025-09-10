@@ -1,7 +1,4 @@
 fun fib(n: int)
-    io.println(clasz.a())
-
-
     if n <= 1 then
         return n
     end

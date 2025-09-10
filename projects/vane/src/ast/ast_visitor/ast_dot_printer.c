@@ -1,5 +1,4 @@
-#include "vane/ast/ast_visitor/ast_dot_visitor.h"
-
+#include "vane/ast/ast_visitor/ast_dot_printer.h"
 
 #include <stdio.h>
 
@@ -13,7 +12,6 @@ void ast_dot_visitor_print_fn(ASTNode* parent, ASTNode* node, void* data) {
     ASTDotVisitorCtx* ctx = data;
 
     fprintf(ctx->out, "  n%llu [label=\"", (u64)node);
-
 
     switch (node->kind) {
     case AST_NODE_IDENTIFIER:

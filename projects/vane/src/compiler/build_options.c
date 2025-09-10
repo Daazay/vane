@@ -237,7 +237,7 @@ static CommandSpec commands[] = {
       "Show help message" },
     { "parse", BUILD_COMMAND_PARSE_AST, &handle_parse, build_parse_options, ARR_SIZE(build_parse_options),
       "Parse files to ast" },
-    { "build", BUILD_COMMAND_BUILD,     &handle_build, NULL, 0,
+    { "build", BUILD_COMMAND_BUILD,     &handle_build, build_parse_options, ARR_SIZE(build_parse_options),
       "Build a project" },
 };
 

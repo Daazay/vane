@@ -6,7 +6,8 @@
 #include "vane/utils/terminal.h"
 #include "vane/utils/string_builder.h"
 
-#include "vane/ast/ast_visitor/ast_dot_visitor.h"
+#include "vane/ast/ast_visitor/ast_dot_printer.h"
+#include "vane/ast/ast_visitor/ast_simple_printer.h"
 
 Compiler compiler_create(BuildOptions* build_options) {
     assert(build_options != NULL);
@@ -278,39 +279,6 @@ Package* compiler_try_resolve_imported_package(Compiler* compiler, SourceFile* s
     return package;
 }
 
-typedef struct DumpAstTextCtx DumpAstTextCtx;
-
-struct DumpAstTextCtx {
-    u32 indent;
-};
-
-static inline void dump_ast_text_pre(ASTNode* parent, ASTNode* node, void* data) {
-    (void)parent;
-
-    DumpAstTextCtx* ctx = (DumpAstTextCtx*)data;
-    for (u32 k = 0; k < ctx->indent; ++k) {
-        printf("  ");
-    }
-
-    printf("%s [%d:%d-%d:%d]\n",
-        ast_node_kind_get_name(node->kind),
-        node->loc.begin.line, node->loc.begin.column,
-        node->loc.end.line, node->loc.end.column
-    );
-
-    ctx->indent++;
-}
-
-static inline void dump_ast_text_post(ASTNode* parent, ASTNode* node, void* data) {
-    (void)parent;
-    (void)node;
-
-    DumpAstTextCtx* ctx = (DumpAstTextCtx*)data;
-    if (ctx->indent) {
-        ctx->indent--;
-    }
-}
-
 void compiler_dump_ast(const Compiler* compiler) {
     assert(compiler != NULL);
 
@@ -322,15 +290,8 @@ void compiler_dump_ast(const Compiler* compiler) {
 
         for (u32 i = 0; i < package->source_files.size; ++i) {
             const SourceFile* sf = vector_at(package->source_files, i);
-            printf("[ast: " SV_FMT "]\n", SV_ARG(sf->path));
-
-            DumpAstTextCtx ctx = { 0 };
-            ASTVisitor v = {
-                .pre_fn = &dump_ast_text_pre,
-                .post_fn = &dump_ast_text_post,
-                .data = &ctx,
-            };
-            ast_visit_with(NULL, sf->ast, &v);
+            printf("[file: " SV_FMT "]\n", SV_ARG(sf->path));
+            ast_print_simple(sf->ast, stdout);
         }
     }
 }
@@ -352,9 +313,149 @@ void compiler_dump_ast_dot(const Compiler* compiler) {
     }
 }
 
+static inline void indent(u32 level) {
+    for (u32 i = 0; i < level; ++i) {
+        printf("  ");
+    }
+}
+
+static inline void print_loc(TokenLoc loc) {
+    printf(SV_FMT ":%d:%d-%d:%d", SV_ARG(loc.path),
+        loc.begin.line, loc.begin.column,
+        loc.end.line, loc.end.column
+    );
+}
+
+static inline void print_sv_quoted(StringView sv) {
+    printf("\"" SV_FMT "\"", SV_ARG(sv));
+}
+
+static inline void compiler_dump_symbol_one(const Symbol* sym, u32 indent_lvl, bool compact) {
+    if (compact) {
+        indent(indent_lvl);
+        printf("- { kind: %s, name: " SV_FMT, symbol_kind_get_name(sym->kind), SV_ARG(sym->name));
+        if (sym->kind == SYMBOL_IMPORT && sym->as.import.target != NULL) {
+            printf(", target: " SV_FMT, SV_ARG(sym->as.import.target->path));
+        }
+        if (sym->ast != NULL) {
+            printf(", loc: ");
+            print_loc(sym->ast->loc);
+        }
+        puts(" }");
+        return;
+    }
+
+    // multi-line block mapping
+    indent(indent_lvl);
+    printf("- kind: %s\n", symbol_kind_get_name(sym->kind));
+
+    indent(indent_lvl + 1);
+    printf("name: " SV_FMT "\n", SV_ARG(sym->name));
+
+    if (sym->kind == SYMBOL_IMPORT && sym->as.import.target != NULL) {
+        indent(indent_lvl + 1);
+        printf("target: " SV_FMT "\n", SV_ARG(sym->as.import.target->path));
+    }
+
+    if (sym->ast != NULL) {
+        indent(indent_lvl + 1);
+        printf("loc: ");
+        print_loc(sym->ast->loc);
+        putchar('\n');
+    }
+}
+
+static void compiler_dump_scope(const Scope* scope, u32 indent_lvl, bool as_list_item) {
+    if (scope == NULL) {
+        indent(indent_lvl);
+        puts("kind: unknown");
+        return;
+    }
+
+    // print "kind" on same line as list dash if requested
+    if (as_list_item) {
+        indent(indent_lvl);
+        printf("- kind: %s\n", scope_kind_get_name(scope->kind));
+    }
+    else {
+        indent(indent_lvl);
+        printf("kind: %s\n", scope_kind_get_name(scope->kind));
+    }
+
+    // when we printed "- kind: ..." we shift the base indentation by +1
+    u32 base = indent_lvl + (as_list_item ? 1u : 0u);
+
+    // optional scope name (functions)
+    if (scope->kind == SCOPE_FUNCTION && scope->ast != NULL && scope->ast->symbol != NULL) {
+        indent(base);
+        printf("name: " SV_FMT "\n", SV_ARG(scope->ast->symbol->name));
+    }
+
+    // symbols
+    {
+        bool has_symbols = (scope->symbols.size > 0);
+        indent(base);
+        puts("symbols:");
+        if (!has_symbols) {
+            indent(base + 1);
+            puts("[]");
+        }
+        else {
+            // compact items inside function scopes (unchanged behavior)
+            bool compact = (scope->kind == SCOPE_FUNCTION);
+
+            HashmapIterator it = hashmap_get_it(&scope->symbols);
+            StringView key = STRING_VIEW_EMPTY;
+            Symbol* sym = NULL;
+            while (hashmap_it_next(&it, &key, &sym)) {
+                if (sym == NULL) continue; // keep this bugfix
+                compiler_dump_symbol_one(sym, base + 1, compact);
+            }
+        }
+    }
+
+    // child scopes
+    {
+        bool has_scopes = (scope->scopes.size > 0);
+        indent(base);
+        puts("scopes:");
+        if (!has_scopes) {
+            indent(base + 1);
+            puts("[]");
+        }
+        else {
+            for (u32 i = 0; i < scope->scopes.size; ++i) {
+                Scope* child = vector_at(scope->scopes, i);
+                // print child with "- kind: ..." on the same line
+                compiler_dump_scope(child, base + 1, true);
+            }
+        }
+    }
+}
+
+static void compiler_dump_package_scopes(const Package* package) {
+    if (package->scope == NULL || (package->scope->scopes.size == 0 && package->scope->symbols.size == 0)) {
+        return;
+    }
+
+    printf("package: " SV_FMT "\n", SV_ARG(package->path));
+    puts("scope:");
+    compiler_dump_scope(package->scope, 1, false);
+    putchar('\n');
+}
+
 void compiler_dump_symbols(const Compiler* compiler) {
     assert(compiler != NULL);
 
+    HashmapIterator it = hashmap_get_it(&compiler->packages);
+    Package* pkg = NULL;
+
+    while (hashmap_it_next(&it, NULL, &pkg)) {
+        if (pkg == NULL) {
+            continue;
+        }
+        compiler_dump_package_scopes(pkg);
+    }
 }
 
 bool compiler_parse_source_files(Compiler* compiler) {

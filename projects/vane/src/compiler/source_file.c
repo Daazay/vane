@@ -493,12 +493,12 @@ static inline void bind_symbols_post_fn(ASTNode* parent, ASTNode* node, void* da
             node->symbol = sym;
         }
         /* NOTE:
-           For non-import members (obj.field), don’t bind here — that’s type-directed.
-           The important part is that the OBJECT side has been handled (or error’d). */
+           For non-import members (obj.field), donï¿½t bind here ï¿½ thatï¿½s type-directed.
+           The important part is that the OBJECT side has been handled (or errorï¿½d). */
     } break;
 
     case AST_NODE_EXPR_PLACE: {
-        /* If still unbound, report — except for the **member** token in a MEMBER expr,
+        /* If still unbound, report ï¿½ except for the **member** token in a MEMBER expr,
            which is resolved either by the import rule above or later by type system. */
         if (node->symbol == NULL && !is_member_child(parent, node)) {
             StringView name = string_get_view(node->as.expr_place.value);
