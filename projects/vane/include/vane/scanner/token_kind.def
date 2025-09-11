@@ -24,7 +24,7 @@ TOKEN_MISC(EOF_,       "eof")
 TOKEN_PUNC(L_CURLY,       "r_curly",       "{")
 TOKEN_PUNC(R_CURLY,       "r_curly",       "}")
 
-TOKEN_PUNC(MINUS_GREATER, "minus_greater", "}")
+TOKEN_PUNC(MINUS_GREATER, "minus_greater", "->")
 
 TOKEN_PUNC(R_BRACE,       "r_brace",       ")")
 TOKEN_PUNC(R_BRACKET,     "r_bracket",     "]")

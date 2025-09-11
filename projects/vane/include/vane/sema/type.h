@@ -77,6 +77,8 @@ struct Type {
     } as;
 };
 
+const char* type_kind_get_name(TypeKind kind);
+
 Type* type_create(TypeKind kind, u32 size, u32 alignment);
 
 void type_destroy(Type* type);

@@ -2,6 +2,7 @@
 
 #include "vane/utils/defines.h"
 #include "vane/utils/string.h"
+#include "vane/utils/vector.h"
 #include "vane/utils/hashmap.h"
 
 #include "vane/sema/type_system.h"
@@ -17,6 +18,7 @@ typedef struct Compiler Compiler;
 #define COMPILER_DEFAULT_PACKAGE_COUNT          8
 #define COMPILER_DEFAULT_SOURCE_FILE_COUNT      8
 #define COMPILER_DEFAULT_COLLECTION_PATHS_COUNT 2
+#define COMPILER_DEFAULT_SOURCE_FILE_QUEUE_SIZE 8
 
 struct Compiler {
     BuildOptions* build_options;
@@ -29,12 +31,17 @@ struct Compiler {
     // value: [SourceFile*, &source_file_destroy]
     Hashmap source_files;
 
+    Vector source_files_queue;
+
     Package* entry_point;
 
     ReportCollector rc;
 
     // visible to all packages
+    // here lays all builtins: types, functions, and etc
     struct Scope* global_scope;
+    // Scopes for core packages
+    struct Scope* prelude_scope;
 
     TypeSystem ts;
 };
@@ -47,11 +54,11 @@ bool compiler_run_command(Compiler* compiler);
 
 StringView compiler_get_collection_path(Compiler* compiler, StringView collection_name);
 
-Package* compiler_load_package(Compiler* compiler, StringView dirpath);
+Package* compiler_load_core_collection(Compiler* compiler);
 
-Package* compiler_try_resolve_imported_package(Compiler* compiler, SourceFile* source_file, StringView collection_name, StringView package_path);
+Package* compiler_load_package(Compiler* compiler, StringView dirpath, bool is_core);
 
-Package* compiler_load_core_collection(Compiler * compiler);
+Package* compiler_resolve_import(Compiler* compiler, SourceFile* source_file, const ImportEntry* e);
 
 // dump functions
 

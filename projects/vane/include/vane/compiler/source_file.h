@@ -12,16 +12,26 @@
 #include "vane/sema/scope.h"
 
 struct Compiler;
+typedef enum ImportBaseKind ImportBaseKind;
 typedef struct SourceFile SourceFile;
 typedef struct ImportEntry ImportEntry;
 
+#define SOURCE_FILE_DEFAULT_ENTITIES_COUNT 8
+#define SOURCE_FILE_DEFAULT_IMPORT_COUNT   2
+
+enum ImportBaseKind {
+    IMPORT_BASE_RELATIVE = 9, // "package_path"                 -> from current package (default)
+    IMPORT_BASE_PROJECT_ROOT, // ":package_path"                -> from project root
+    IMPORT_BASE_COLLECTION,   // "collection_name:package_path" -> from collection
+};
+
 struct ImportEntry {
     StringView name;
-
     ASTNode* node;
     struct Package* target;
 
-    StringView collection_name;
+    ImportBaseKind base;
+    StringView collection_name; // if base == IMPORT_BASE_COLLECTION
     StringView package_path;
 };
 
@@ -42,6 +52,8 @@ struct SourceFile {
     struct Package* package;
 
     ReportCollector* rc;
+
+    bool imports_resolved;
 };
 
 SourceFile* source_file_create(StringView path, ReportCollector* rc);

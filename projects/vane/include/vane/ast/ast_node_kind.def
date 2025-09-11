@@ -143,6 +143,16 @@ AST_NODE_TYPEREF(ARR, "arr", struct {
     AST_NODE_VISIT_CHILD_FN(node->as.typeref_arr.typeref);
 )
 
+AST_NODE_TYPEREF(QUALIFIED, "qualified", struct {
+    Vector segments;
+} typeref_qualified;,
+    vector_destroy(&node->as.typeref_qualified.segments);,
+
+    for (u32 i = 0; i < node->as.typeref_qualified.segments.size; ++i) {
+        AST_NODE_VISIT_CHILD_FN(vector_at(node->as.typeref_qualified.segments, i));
+    }
+)
+
 AST_NODE_TYPEREF(FUN_PARAM, "fun:param", struct {
     ASTNode* id;
     ASTNode* typeref;

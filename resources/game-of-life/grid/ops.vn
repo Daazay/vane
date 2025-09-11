@@ -1,0 +1,36 @@
+import ":util"
+
+fun in_bound_y(y: i32): bool
+    return y >= 0 && y <= height()
+end
+
+fun in_bound_x(x: i32): bool
+    return x >= 0 && x <= width()
+end
+
+fun get(gd: Grid, y: i32, x: i32): bool
+    // toroidal wrap using util.wrap from open import
+    var yy = wrap(y, height())
+    var xx = wrap(x, width())
+
+    return gd[yy][xx]
+end
+
+fun count_live_neighbors(gd: Grid, y: i32, x: i32): i32
+    var cnt: i32 = 0
+    var dy: i32 = -1
+
+    while dy <= 1 do
+        var dx: i32 = -1
+        while dx <= 1 do
+            if !(dy == 0 && dx == 0) then
+                if get(gd, y + dy, x + dx) then
+                    cnt = cnt + 1
+                end
+            end
+            dx++
+        end
+        dy++
+    end
+    return cnt
+end

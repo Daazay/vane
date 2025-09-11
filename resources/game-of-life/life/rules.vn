@@ -1,0 +1,15 @@
+type LifeRule = (alive: bool, neighbors: i32) -> bool
+
+fun conway(alive: bool, n: i32): bool
+    if alive then
+        if n == 2 then
+            return true
+        else if n == 3 then
+            return true
+        else
+            return false
+        end
+    else
+        return n == 3
+    end
+end

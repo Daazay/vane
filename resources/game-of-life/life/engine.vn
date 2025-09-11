@@ -1,0 +1,25 @@
+import ":grid" as g
+import ":life"
+import ":util"
+
+// Compute next state for a single cell to keep mutation out of helpers
+fun next_cell(src: g.Grid, y: i32, x: i32, rule: LifeRule): bool
+    var n: i32 = g.count_live_neighbors(src, y, x)
+    var a: bool = g.get(src, y, x)
+    return rule(a, n)
+end
+
+// One full step: return a fresh grid
+fun step(src: g.Grid, rule: LifeRule): g.Grid
+    var dst: g.Grid
+    var y: i32 = 0
+    while y < g.height() do
+        var x: i32 = 0
+        while x < g.width() do
+            dst[y][x] = next_cell(src, y, x, rule)
+            x++
+        end
+        y++
+    end
+    return dst
+end

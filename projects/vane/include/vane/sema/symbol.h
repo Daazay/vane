@@ -5,22 +5,29 @@
 
 #include "vane/scanner/token_loc.h"
 
-struct Type;
-struct TypeSystem;
+#include "vane/sema/type.h"
+
 struct ReportCollector;
 struct ASTNode;
-enum TypeResolveState;
 
 typedef enum SymbolKind SymbolKind;
 typedef struct Symbol Symbol;
+typedef struct SymbolSet SymbolSet;
 
 enum SymbolKind {
     SYMBOL_UNKNOWN = 0,
+
     SYMBOL_IMPORT,
     SYMBOL_TYPEALIAS,
     SYMBOL_FUNCTION,
     SYMBOL_PARAMETER,
     SYMBOL_VARIABLE,
+
+    SYMBOL_KIND_COUNT,
+};
+
+struct SymbolSet {
+    Symbol* by_kind[SYMBOL_KIND_COUNT - 1];
 };
 
 struct Symbol {
@@ -36,8 +43,8 @@ struct Symbol {
             struct Package* target;
         } import;
         struct {
-            enum TypeResolveState type_state;
-            struct Type* type;
+            Type* type;
+            TypeResolveState type_state;
         } typed;
     } as;
 };

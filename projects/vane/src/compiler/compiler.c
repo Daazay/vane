@@ -5,6 +5,7 @@
 #include "vane/utils/path.h"
 #include "vane/utils/terminal.h"
 #include "vane/utils/string_builder.h"
+#include "vane/utils/env.h"
 
 #include "vane/ast/ast_visitor/ast_dot_printer.h"
 #include "vane/ast/ast_visitor/ast_simple_printer.h"
@@ -27,6 +28,11 @@ Compiler compiler_create(BuildOptions* build_options) {
         HASHMAP_VALUE_SPECS(SourceFile*, &source_file_destroy)
     );
 
+    compiler.source_files_queue = vector_create(
+        COMPILER_DEFAULT_SOURCE_FILE_QUEUE_SIZE,
+        VECTOR_SPECS(SourceFile*, NULL)
+    );
+
     compiler.entry_point = NULL;
     compiler.global_scope = scope_create(SCOPE_GLOBAL, NULL, NULL);
 
@@ -44,6 +50,7 @@ void compiler_destroy(Compiler* compiler) {
 
     hashmap_destroy(&compiler->packages);
     hashmap_destroy(&compiler->source_files);
+    vector_destroy(&compiler->source_files_queue);
 
     scope_destroy(compiler->global_scope);
 
@@ -73,11 +80,24 @@ enum CompilerPipelineStage {
     COMPILER_PIPE_RESOLVE_TYPES,
 };
 
+static Package* compiler_find_subpackage_named(const Package* parent, StringView name) {
+    if (parent == NULL)  {
+        return NULL;
+    }
+    for (u32 i = 0; i < parent->subpackages.size; ++i) {
+        Package* p = vector_at(parent->subpackages, i);
+        StringView basename = path_get_basename(p->path);
+        if (string_view_eq_sv(basename, name)) {
+            return p;
+        }
+    }
+    return NULL;
+}
+
 static inline bool compiler_run_upto(Compiler* compiler, CompilerPipelineStage stage) {
     assert(compiler != NULL);
 
     Package* core_package = compiler_load_core_collection(compiler);
-    (void)core_package;
 
     if (!compiler_parse_source_files(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_PARSE_AST) return !compiler_should_halt(compiler);
@@ -85,7 +105,24 @@ static inline bool compiler_run_upto(Compiler* compiler, CompilerPipelineStage s
     if (!compiler_resolve_imports(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_IMPORTS) return !compiler_should_halt(compiler);
 
-    // Declare
+    // Build prelude scope from base core package
+    if (core_package != NULL) {
+        Scope* chain_tail = compiler->global_scope;
+
+        Package* base_package = compiler_find_subpackage_named(core_package,    STR_LIT("base"));
+        Package* builtin_package = compiler_find_subpackage_named(base_package, STR_LIT("builtin"));
+
+        // Resolve symbol declaration first in core packages
+        if (builtin_package != NULL) {
+            package_resolve_symbol_decls(builtin_package, compiler->global_scope);
+            chain_tail = builtin_package->scope;
+        }
+
+        compiler->prelude_scope = scope_create(SCOPE_PRELUDE, chain_tail, NULL);
+    }
+    else {
+        compiler->prelude_scope = scope_create(SCOPE_PRELUDE, compiler->global_scope, NULL);
+    }
 
     if (!compiler_resolve_symbol_decls(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_SYMBOLS) return !compiler_should_halt(compiler);
@@ -107,15 +144,15 @@ bool compiler_run_command(Compiler* compiler) {
         return true;
     }
 
-    if (is_string_view_empty(string_get_view(compiler->build_options->root_path))) {
-        REPORT_ERROR(&compiler->rc, "driver", "no root path provided.");
+    if (is_string_view_empty(string_get_view(compiler->build_options->project_path))) {
+        REPORT_ERROR(&compiler->rc, "driver", "no package path provided.");
         return false;
     }
 
     // Load entry package
-    Package* root = compiler_load_package(compiler, string_get_view(compiler->build_options->root_path));
+    Package* root = compiler_load_package(compiler, string_get_view(compiler->build_options->project_path), false);
     if (root == NULL) {
-        REPORT_ERROR(&compiler->rc, "driver", "failed to load package at '"SV_FMT"'.", SV_ARG(compiler->build_options->root_path));
+        REPORT_ERROR(&compiler->rc, "driver", "failed to load project '"SV_FMT"'.", SV_ARG(compiler->build_options->project_path));
         return false;
     }
 
@@ -160,7 +197,25 @@ StringView compiler_get_collection_path(Compiler* compiler, StringView collectio
     return path != NULL ? *path : STRING_VIEW_EMPTY;
 }
 
-Package* compiler_load_package(Compiler* compiler, StringView dirpath) {
+
+
+static inline DirListStatus compiler_get_entries_in_dir(Vector* entries, StringView path, ReportCollector* rc) {
+    DirListStatus status = directory_list(path, entries, false);
+    switch (status) {
+    case DIR_LIST_OK: break;
+    case DIR_LIST_ERR_INVALID_PATH: REPORT_ERROR(rc, "driver", "invalid path: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_NOT_FOUND: REPORT_ERROR(rc, "driver", "path not found: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_ACCESS_DENIED: REPORT_ERROR(rc, "driver", "access denied for path: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_NOT_DIR: REPORT_ERROR(rc, "driver", "path is not a directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_OPEN: REPORT_ERROR(rc, "driver", "failed to open directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_READ: REPORT_ERROR(rc, "driver", "failed to read directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_STAT: REPORT_ERROR(rc, "driver", "failed to stat directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    }
+
+    return status;
+}
+
+Package* compiler_load_package(Compiler* compiler, StringView dirpath, bool is_core) {
     assert(compiler != NULL);
 
     // Resolve absolute path
@@ -183,34 +238,11 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath) {
     hashmap_insert(&compiler->packages, &abs_path, NULL);
 
     Vector entries = { 0 };
-    DirListStatus status = directory_list(abs_path_sv, &entries, false);
-    switch (status) {
-    case DIR_LIST_OK: break;
-    case DIR_LIST_ERR_INVALID_PATH:
-        REPORT_ERROR(&compiler->rc, "driver", "invalid path: '" SV_FMT"'.", SV_ARG(abs_path_sv));
-        return NULL;
-    case DIR_LIST_ERR_NOT_FOUND:
-        REPORT_ERROR(&compiler->rc, "driver", "path not found: '" SV_FMT"'.", SV_ARG(abs_path_sv));
-        return NULL;
-    case DIR_LIST_ERR_ACCESS_DENIED:
-        REPORT_ERROR(&compiler->rc, "driver", "access denied for path: '" SV_FMT"'.", SV_ARG(abs_path_sv));
-        return NULL;
-    case DIR_LIST_ERR_NOT_DIR:
-        REPORT_ERROR(&compiler->rc, "driver", "path is not a directory: '" SV_FMT"'.", SV_ARG(abs_path_sv));
-        return NULL;
-    case DIR_LIST_ERR_OPEN:
-        REPORT_ERROR(&compiler->rc, "driver", "failed to open directory: '" SV_FMT"'.", SV_ARG(abs_path_sv));
-        return NULL;
-    case DIR_LIST_ERR_READ:
-        REPORT_ERROR(&compiler->rc, "driver", "failed to read directory: '" SV_FMT"'.", SV_ARG(abs_path_sv));
-        return NULL;
-    case DIR_LIST_ERR_STAT:
-        REPORT_ERROR(&compiler->rc, "driver", "failed to stat directory: '" SV_FMT"'.", SV_ARG(abs_path_sv));
+    if (compiler_get_entries_in_dir(&entries, abs_path_sv, &compiler->rc) != DIR_LIST_OK) {
         return NULL;
     }
 
     Package* package = NULL;
-
     for (u32 i = 0; i < entries.size; ++i) {
         DirEntry* entry = vector_at(entries, i);
         StringView basename = path_get_basename(string_get_view(entry->fullpath));
@@ -227,7 +259,7 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath) {
 
         // Process subdirectories recursively
         if (entry->is_dir) {
-            Package* subpackage = compiler_load_package(compiler, string_get_view(entry->fullpath));
+            Package* subpackage = compiler_load_package(compiler, string_get_view(entry->fullpath), is_core);
             if (subpackage == NULL) {
                 REPORT_NOTE(&compiler->rc, "driver", "skipping '"SV_FMT"' (no package created)", SV_ARG(basename));
                 continue;
@@ -254,6 +286,8 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath) {
 
             if (source_file != NULL) {
                 vector_push_back(&package->source_files, &source_file);
+                vector_push_back(&compiler->source_files_queue, &source_file);
+
                 source_file->package = package;
                 REPORT_INFO(&compiler->rc, "driver", "added source file '" SV_FMT"'.", SV_ARG(basename));
             }
@@ -268,56 +302,107 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath) {
     if (package != NULL) {
         hashmap_insert(&compiler->packages, &abs_path, &package);
         REPORT_INFO(&compiler->rc, "driver", "registered package '" SV_FMT"'.", SV_ARG(package_name));
+
+        package->is_core = is_core;
     }
 
     return package;
 
 }
 
-Package* compiler_try_resolve_imported_package(Compiler* compiler, SourceFile* source_file, StringView collection_name, StringView package_path) {
-    assert(compiler != NULL && source_file != NULL);
+Package* compiler_resolve_import(Compiler* compiler, SourceFile* source_file, const ImportEntry* e) {
+    assert(compiler != NULL && source_file != NULL && e != NULL);
 
     String import_path = STRING_EMPTY;
 
-    if (!is_string_view_empty(collection_name)) {
-        StringView collection_path = compiler_get_collection_path(compiler, collection_name);
-        if (is_string_view_empty(collection_path)) {
-            REPORT_ERROR(&compiler->rc, "driver", "could not resolve collection with name '" SV_FMT"'.", SV_ARG(collection_name));
+    switch (e->base) {
+    case IMPORT_BASE_COLLECTION: {
+        StringView root = compiler_get_collection_path(compiler, e->collection_name);
+        if (is_string_view_empty(root)) {
+            REPORT_ERROR(&compiler->rc, "driver", "could not resolve collection '"SV_FMT"'.", SV_ARG(e->collection_name));
             return NULL;
         }
 
-        import_path = path_join_sv(collection_path, package_path);
-    }
-    else {
-        import_path = path_join_sv(source_file->package->path, package_path);
+        String tmp = path_join_sv(root, e->package_path);
+        import_path = path_get_normalized(string_get_view(tmp));
+        string_destroy(&tmp);
+    } break;
+
+    case IMPORT_BASE_PROJECT_ROOT: {
+        if (e->package_path.len == 0) {
+            REPORT_ERROR(&compiler->rc, "driver", "root import must have a path, e.g. \":grid\".");
+            return NULL;
+        }
+
+        StringView root_dir = string_get_view(compiler->build_options->project_path);
+        if (is_string_view_empty(root_dir)) {
+            REPORT_ERROR(&compiler->rc, "driver", "project root not set.");
+            return NULL;
+        }
+
+        String tmp = path_join_sv(root_dir, e->package_path);
+        import_path = path_get_normalized(string_get_view(tmp));
+        string_destroy(&tmp);
+    } break;
+
+    case IMPORT_BASE_RELATIVE: {
+        StringView base = source_file->package->path;
+        String tmp = path_join_sv(base, e->package_path);
+        import_path = path_get_normalized(string_get_view(tmp));
+        string_destroy(&tmp);
+    } break;
+    default:
+        unreachable();
+        break;
     }
 
-    Package* package = compiler_load_package(compiler, string_get_view(import_path));
+    Package* pkg = compiler_load_package(compiler, string_get_view(import_path), false);
     string_destroy(&import_path);
+    return pkg;
+}
 
-    return package;
+static inline StringView compiler_resolve_vane_root(Compiler* compiler) {
+    // CLI override
+    {
+        StringView key = STR_LIT("vane_root");
+        StringView sv  = compiler_get_collection_path(compiler, key);
+        if (!is_string_view_empty(sv)) {
+            compiler->build_options->vane_root_path = path_get_absolute(sv);
+            return string_get_view(compiler->build_options->vane_root_path);
+        }
+    }
+
+    // Environment: VANE_ROOT
+    {
+        String env = env_get_var(STR_LIT("VANE_ROOT"));
+        if (!is_string_empty(env)) {
+            compiler->build_options->vane_root_path = env;
+            return string_get_view(compiler->build_options->vane_root_path);
+        }
+    }
+
+    return STRING_VIEW_EMPTY;
 }
 
 Package* compiler_load_core_collection(Compiler* compiler) {
     assert(compiler != NULL);
 
-    StringView key = STR_LIT("vane_core");
-    StringView core_path = compiler_get_collection_path(compiler, key);
-    if (is_string_view_empty(core_path)) {
-        REPORT_NOTE(&compiler->rc, "driver", "no 'vane_core' collection configured; skipping core prelude.");
+    StringView vane_root_path = compiler_resolve_vane_root(compiler);
+    if (is_string_view_empty(vane_root_path)) {
+        REPORT_NOTE(&compiler->rc, "driver", "no core collection configured (use --collection vane_root=<path> or set VANE_ROOT).");
         return NULL;
     }
 
-    REPORT_INFO(&compiler->rc, "driver", "loading core collection from '"SV_FMT"'.", SV_ARG(core_path));
+    REPORT_INFO(&compiler->rc, "driver", "loading core collection from '" SV_FMT "'.", SV_ARG(vane_root_path));
 
-    Package* core_package = compiler_load_package(compiler, core_path);
-    if (core_package == NULL) {
-        REPORT_ERROR(&compiler->rc, "driver", "failed to load core collection from '"SV_FMT"'.", SV_ARG(core_path));
+    Package* core = compiler_load_package(compiler, vane_root_path, true);
+    if (core == NULL) {
+        REPORT_ERROR(&compiler->rc, "driver", "failed to load core collection from '" SV_FMT "'.", SV_ARG(vane_root_path));
         return NULL;
     }
 
-    core_package->is_core = true;
-    return core_package;
+    core->is_core = true;
+    return core;
 }
 
 void compiler_dump_ast(const Compiler* compiler) {
@@ -413,7 +498,7 @@ static void compiler_dump_scope(const Scope* scope, u32 indent_lvl, bool as_list
         return;
     }
 
-    // print "kind" on same line as list dash if requested
+    // Header
     if (as_list_item) {
         indent(indent_lvl);
         printf("- kind: %s\n", scope_kind_get_name(scope->kind));
@@ -423,10 +508,9 @@ static void compiler_dump_scope(const Scope* scope, u32 indent_lvl, bool as_list
         printf("kind: %s\n", scope_kind_get_name(scope->kind));
     }
 
-    // when we printed "- kind: ..." we shift the base indentation by +1
     u32 base = indent_lvl + (as_list_item ? 1u : 0u);
 
-    // optional scope name (functions)
+    // optional function name
     if (scope->kind == SCOPE_FUNCTION && scope->ast != NULL && scope->ast->symbol != NULL) {
         indent(base);
         printf("name: " SV_FMT "\n", SV_ARG(scope->ast->symbol->name));
@@ -434,7 +518,7 @@ static void compiler_dump_scope(const Scope* scope, u32 indent_lvl, bool as_list
 
     // symbols
     {
-        bool has_symbols = (scope->symbols.size > 0);
+        bool has_symbols = (scope->symbol_sets.size > 0);
         indent(base);
         puts("symbols:");
         if (!has_symbols) {
@@ -442,32 +526,37 @@ static void compiler_dump_scope(const Scope* scope, u32 indent_lvl, bool as_list
             puts("[]");
         }
         else {
-            // compact items inside function scopes (unchanged behavior)
             bool compact = (scope->kind == SCOPE_FUNCTION);
 
-            HashmapIterator it = hashmap_get_it(&scope->symbols);
+            HashmapIterator it = hashmap_get_it(&scope->symbol_sets);
             StringView key = STRING_VIEW_EMPTY;
-            Symbol* sym = NULL;
-            while (hashmap_it_next(&it, &key, &sym)) {
-                if (sym == NULL) continue; // keep this bugfix
-                compiler_dump_symbol_one(sym, base + 1, compact);
+            SymbolSet set = { 0 };
+
+            while (hashmap_it_next(&it, &key, &set)) {
+                for (u32 i = 0; i < SYMBOL_KIND_COUNT - 1; ++i) {
+                    Symbol* symbol = set.by_kind[i];
+                    if (symbol == NULL) {
+                        continue;
+                    }
+
+                    compiler_dump_symbol_one(symbol, base + 1, compact);
+                }
             }
         }
     }
 
     // child scopes
     {
-        bool has_scopes = (scope->scopes.size > 0);
+        bool has_children = (scope->scopes.size > 0);
         indent(base);
         puts("scopes:");
-        if (!has_scopes) {
+        if (!has_children) {
             indent(base + 1);
             puts("[]");
         }
         else {
             for (u32 i = 0; i < scope->scopes.size; ++i) {
                 Scope* child = vector_at(scope->scopes, i);
-                // print child with "- kind: ..." on the same line
                 compiler_dump_scope(child, base + 1, true);
             }
         }
@@ -475,7 +564,7 @@ static void compiler_dump_scope(const Scope* scope, u32 indent_lvl, bool as_list
 }
 
 static void compiler_dump_package_scopes(const Package* package) {
-    if (package->scope == NULL || (package->scope->scopes.size == 0 && package->scope->symbols.size == 0)) {
+    if (package->scope == NULL || (package->scope->scopes.size == 0 && package->scope->symbol_sets.size == 0)) {
         return;
     }
 
@@ -492,7 +581,7 @@ void compiler_dump_symbols(const Compiler* compiler) {
     Package* pkg = NULL;
 
     while (hashmap_it_next(&it, NULL, &pkg)) {
-        if (pkg == NULL) {
+        if (pkg == NULL || pkg->is_core) {
             continue;
         }
         compiler_dump_package_scopes(pkg);
@@ -600,9 +689,6 @@ static void print_type_inline_canonical(const Type* t) {
     }
 }
 
-/* Alias-friendly printer: keep aliases where encountered, but when we show
-   an alias’s target (the RHS after "(= "), print it CANONICALLY (fully expanded)
-   to avoid chains like "int (= int (= i32))". */
 static void print_type_inline_alias(const Type* t) {
     if (!t) { printf("<null>"); return; }
 
@@ -670,62 +756,74 @@ static void print_type_inline(const Type* t) {
     print_type_inline_alias(t);
 }
 
-// ---------- dump “types per symbol” the same way you dump symbols ----------
-
 static void compiler_dump_scope_types(const Scope* scope, u32 indent_lvl, bool as_list_item) {
-    if (!scope) {
-        indent(indent_lvl); puts("kind: unknown"); return;
+    if (scope == NULL) {
+        indent(indent_lvl);
+        puts("kind: unknown");
+        return;
     }
 
-    // put "kind" on the correct line (mirrors compiler_dump_scope)
+    // Header
     if (as_list_item) {
-        indent(indent_lvl); printf("- kind: %s\n", scope_kind_get_name(scope->kind));
+        indent(indent_lvl);
+        printf("- kind: %s\n", scope_kind_get_name(scope->kind));
     }
     else {
-        indent(indent_lvl); printf("kind: %s\n", scope_kind_get_name(scope->kind));
+        indent(indent_lvl);
+        printf("kind: %s\n", scope_kind_get_name(scope->kind));
     }
 
     const u32 base = indent_lvl + (as_list_item ? 1u : 0u);
 
-    // label (function name) if applicable
-    if (scope->kind == SCOPE_FUNCTION && scope->ast && scope->ast->symbol) {
-        indent(base); printf("name: " SV_FMT "\n", SV_ARG(scope->ast->symbol->name));
+    // optional function name
+    if (scope->kind == SCOPE_FUNCTION && scope->ast != NULL && scope->ast->symbol) {
+        indent(base);
+        printf("name: " SV_FMT "\n", SV_ARG(scope->ast->symbol->name));
     }
 
     // print symbol types
     {
-        bool has_symbols = (scope->symbols.size > 0);
-        indent(base); puts("symbol_types:");
+        bool has_symbols = (scope->symbol_sets.size > 0);
+        indent(base);
+        puts("symbol_types:");
         if (!has_symbols) {
-            indent(base + 1); puts("[]");
+            indent(base + 1);
+            puts("[]");
         }
         else {
-            HashmapIterator it = hashmap_get_it(&scope->symbols);
+            HashmapIterator it = hashmap_get_it(&scope->symbol_sets);
             StringView key = STRING_VIEW_EMPTY;
-            Symbol* sym = NULL;
-            while (hashmap_it_next(&it, &key, &sym)) {
-                if (!sym) continue;
-                indent(base + 1);
-                printf("- { kind: %s, name: " SV_FMT, symbol_kind_get_name(sym->kind), SV_ARG(sym->name));
+            SymbolSet set = {0};
 
-                // location if available
-                if (sym->ast) {
-                    printf(", loc: ");
-                    print_loc(sym->ast->loc);
-                }
+            while (hashmap_it_next(&it, &key, &set)) {
+                for (u32 i = 0; i < SYMBOL_KIND_COUNT - 1; ++i) {
+                    Symbol* symbol = set.by_kind[i];
+                    if (symbol == NULL) {
+                        continue;
+                    }
 
-                // type if available
-                printf(", type: ");
-                if (sym->kind == SYMBOL_IMPORT) {
-                    printf("<n/a>");
+                    indent(base + 1);
+                    printf("- { kind: %s, name: " SV_FMT, symbol_kind_get_name(symbol->kind), SV_ARG(symbol->name));
+
+
+                    if (symbol->ast != NULL) {
+                        printf(", loc: ");
+                        print_loc(symbol->ast->loc);
+                    }
+
+                    // type if available
+                    printf(", type: ");
+                    if (symbol->kind == SYMBOL_IMPORT) {
+                        printf("<n/a>");
+                    }
+                    else if (symbol->as.typed.type) {
+                        print_type_inline(symbol->as.typed.type);
+                    }
+                    else {
+                        printf("<unset>");
+                    }
+                    puts(" }");
                 }
-                else if (sym->as.typed.type) {
-                    print_type_inline(sym->as.typed.type);
-                }
-                else {
-                    printf("<unset>");
-                }
-                puts(" }");
             }
         }
     }
@@ -761,7 +859,13 @@ void compiler_dump_types(const Compiler* compiler) {
     Package* pkg = NULL;
 
     while (hashmap_it_next(&it, NULL, &pkg)) {
-        if (!pkg || !pkg->scope) continue;
+        if (pkg == NULL || pkg->scope == NULL) {
+            continue;
+        }
+
+        if (pkg->is_core) {
+            continue;
+        }
         compiler_dump_package_types(pkg);
     }
 }
@@ -771,14 +875,9 @@ bool compiler_parse_source_files(Compiler* compiler) {
 
     bool is_ok = true;
 
-    HashmapIterator source_file_it = hashmap_get_it(&compiler->source_files);
-    SourceFile* source_file = NULL;
-    StringView source_file_path = STRING_VIEW_EMPTY;
-
-    while (hashmap_it_next(&source_file_it, &source_file_path, &source_file)) {
-        if (source_file == NULL) {
-            continue;
-        }
+    while (compiler->source_files_queue.size > 0) {
+        SourceFile* source_file = vector_at_back(compiler->source_files_queue);
+        vector_pop_back(&compiler->source_files_queue);
 
         if (!source_file_parse_ast(source_file)) {
             is_ok = false;
@@ -788,23 +887,79 @@ bool compiler_parse_source_files(Compiler* compiler) {
     return is_ok;
 }
 
-bool compiler_resolve_imports(Compiler* compiler) {
-    assert(compiler != NULL);
+static inline bool compiler_drain_parse_queue(Compiler* compiler, Vector* resolve_queue) {
+    assert(compiler != NULL && resolve_queue != NULL);
 
-    bool is_ok = true;
+    bool is_good = true;
 
-    HashmapIterator source_file_it = hashmap_get_it(&compiler->source_files);
-    SourceFile* source_file = NULL;
-    while (hashmap_it_next(&source_file_it, NULL, &source_file)) {
-        if (source_file == NULL) {
-            continue;
+    while (compiler->source_files_queue.size > 0) {
+        SourceFile* source_file = vector_at_back(compiler->source_files_queue);
+        vector_pop_back(&compiler->source_files_queue);
+
+        if (!source_file_parse_ast(source_file)) {
+            is_good = false;
         }
-        if (!source_file_resolve_imports(source_file, compiler)) {
-            is_ok = false;
+
+        if (source_file->ast != NULL && !source_file->imports_resolved) {
+            vector_push_back(resolve_queue, &source_file);
         }
     }
 
-    return is_ok;
+    return is_good;
+}
+
+static inline bool compiler_drain_resolve_queue(Compiler* compiler, Vector* resolve_queue) {
+    assert(compiler != NULL && resolve_queue != NULL);
+
+    bool is_good = true;
+
+    while (resolve_queue->size > 0) {
+        SourceFile* source_file = vector_at_back(*resolve_queue);
+        vector_pop_back(resolve_queue);
+
+        if (source_file->imports_resolved || source_file->ast == NULL) {
+            continue;
+        }
+
+        if (!source_file_resolve_imports(source_file, compiler)) {
+            is_good = false;
+        }
+
+        source_file->imports_resolved = true;
+    }
+
+    return is_good;
+}
+
+bool compiler_resolve_imports(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    bool is_good = true;
+
+    Vector resolve_queue = vector_create(8, VECTOR_SPECS(SourceFile*, NULL));
+
+    {
+        HashmapIterator it = hashmap_get_it(&compiler->source_files);
+        SourceFile* source_file = NULL;
+
+        while (hashmap_it_next(&it, NULL, &source_file)) {
+            if (source_file != NULL && source_file->ast != NULL && !source_file->imports_resolved) {
+                vector_push_back(&resolve_queue, &source_file);
+            }
+        }
+    }
+
+    while (compiler->source_files_queue.size > 0 || resolve_queue.size > 0) {
+        if (!compiler_drain_parse_queue(compiler, &resolve_queue)) {
+            is_good = false;
+        }
+        if (!compiler_drain_resolve_queue(compiler, &resolve_queue)) {
+            is_good = false;
+        }
+    }
+
+    vector_destroy(&resolve_queue);
+    return is_good;
 }
 
 bool compiler_resolve_symbol_decls(Compiler* compiler) {
@@ -820,12 +975,40 @@ bool compiler_resolve_symbol_decls(Compiler* compiler) {
             continue;
         }
 
-        if (!package_resolve_symbol_decls(package, compiler->global_scope)) {
+        if (!package_resolve_symbol_decls(package, compiler->prelude_scope)) {
             status = false;
         }
     }
 
     return status;
+}
+
+static inline bool compiler_populate_global_scope_with_symbols(Compiler* compiler) {
+    assert(compiler != NULL);
+
+#define ADD_BUILTIN_TYPE(NAME, BUILTIN_TYPE) do { \
+        Symbol* sym = symbol_create(SYMBOL_TYPEALIAS, STR_LIT(NAME), NULL); \
+        sym->as.typed.type = &compiler->ts.builtin_types[(BUILTIN_TYPE)]; \
+        sym->as.typed.type_state = TYPE_STATE_RESOLVED; \
+        scope_add_symbol(compiler->global_scope, sym); \
+    } while (false)
+
+    // Map of public names -> compiler builtin kinds
+    ADD_BUILTIN_TYPE("void", TYPE_BUILTIN_VOID);
+    ADD_BUILTIN_TYPE("bool", TYPE_BUILTIN_BOOL);
+    ADD_BUILTIN_TYPE("any", TYPE_BUILTIN_ANY);
+
+    ADD_BUILTIN_TYPE("u8", TYPE_BUILTIN_U8);
+    ADD_BUILTIN_TYPE("i8", TYPE_BUILTIN_I8);
+    ADD_BUILTIN_TYPE("u16", TYPE_BUILTIN_U16);
+    ADD_BUILTIN_TYPE("i16", TYPE_BUILTIN_I16);
+    ADD_BUILTIN_TYPE("u32", TYPE_BUILTIN_U32);
+    ADD_BUILTIN_TYPE("i32", TYPE_BUILTIN_I32);
+    ADD_BUILTIN_TYPE("u64", TYPE_BUILTIN_U64);
+    ADD_BUILTIN_TYPE("i64", TYPE_BUILTIN_I64);
+
+#undef ADD_BUILTIN_TYPE
+    return true;
 }
 
 bool compiler_bind_symbols(Compiler* compiler) {

@@ -1,9 +1,25 @@
 #include "vane/sema/type.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 
 #include "vane/utils/hash.h"
 #include "vane/sema/type_system.h"
+
+const char* type_kind_get_name(TypeKind kind) {
+    switch (kind) {
+    case TYPE_UNRESOLVED: return "unresolved";
+    case TYPE_BUILTIN:    return "builtin";
+    case TYPE_POINTER:    return "pointer";
+    case TYPE_ALIAS:      return "alias";
+    case TYPE_ARRAY:      return "array";
+    case TYPE_SLICE:      return "slice";
+    case TYPE_FUNCTION:   return "function";
+    default:
+        unreachable();
+        return NULL;
+    }
+}
 
 Type* type_create(TypeKind kind, u32 size, u32 alignment) {
     Type* type = malloc(sizeof(Type));
@@ -87,7 +103,7 @@ Type* type_slice_create(const TypeSystem* ts, const Type* elem) {
 }
 
 Type* type_fun_create(const TypeSystem* ts, const Type** params, u32 param_count, const Type* ret) {
-    assert(ret != NULL && ((params && param_count == 0) || params != NULL));
+    assert(ret != NULL && ((params != NULL && param_count > 0) || params == NULL));
 
     Type* type = type_create(TYPE_FUNCTION, ts->target.pointer_size, ts->target.pointer_size);
     type->as.fun.params = params;

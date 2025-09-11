@@ -1,0 +1,16 @@
+type bool = bool
+
+type u8  = u8
+type i8  = i8
+type u16 = u16
+type i16 = i16
+type u32 = u32
+type i32 = i32
+type u64 = u64
+type i64 = i64
+
+type short = i16
+type int   = i32
+type long  = i64
+
+type string = []u8

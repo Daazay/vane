@@ -8,6 +8,7 @@
 
 #if defined(PLATFORM_WINDOWS)
 #include <Windows.h>
+#include "vane/utils/win.h"
 #else
 #include <unistd.h>
 #include <linux/limits.h>
@@ -57,38 +58,10 @@ static bool is_path_win_drive_root(StringView path) {
         is_path_sep(path.data[2]);
 }
 
-static u16* win_utf8_to_utf16(StringView path, u64* out_len) {
-    *out_len = convert_utf8_to_utf16(path.data, path.len, NULL, 0);
-    if (*out_len == (u64)UNICODE_INVALID_LEN) {
-        return NULL;
-    }
-
-    u16* buf = malloc((*out_len + 1) * sizeof(u16));
-    assert(buf != NULL);
-
-    convert_utf8_to_utf16(path.data, path.len, buf, *out_len);
-    buf[*out_len] = 0;
-
-    return buf;
-}
-
-static String win_utf16_to_utf8(const u16* buf, u64 len) {
-    u64 u8_len = convert_utf16_to_utf8(buf, len, NULL, 0);
-    if (u8_len == (u64)UNICODE_INVALID_LEN) {
-        return STRING_EMPTY;
-    }
-
-    StringBuilder sb = string_builder_create(u8_len);
-    sb.len = convert_utf16_to_utf8(buf, len, sb.data, u8_len);
-    sb.data[sb.len] = 0;
-
-    return string_builder_release(&sb);
-}
-
 static DWORD win_path_get_attrs(StringView path) {
     u64 u16_len = 0;
-    u16* u16_buf = win_utf8_to_utf16(path, &u16_len);
-    if (u16_buf == NULL || u16_len == UNICODE_INVALID_LEN) {
+    u16* u16_buf = NULL;
+    if (!win_utf8_to_utf16_alloc(path, &u16_buf, &u16_len)) {
         return INVALID_FILE_ATTRIBUTES;
     }
 
@@ -119,8 +92,8 @@ String path_get_absolute(StringView path) {
 #if defined(PLATFORM_WINDOWS)
     // convert UTF8 to UTF16 for Windows API
     u64 u16_len = 0;
-    u16* u16_buf = win_utf8_to_utf16(path, &u16_len);
-    if (u16_buf == NULL || u16_len == (u64)UNICODE_INVALID_LEN) {
+    u16* u16_buf = NULL;
+    if (!win_utf8_to_utf16_alloc(path, &u16_buf, &u16_len)) {
         return STRING_EMPTY;
     }
 
@@ -137,7 +110,7 @@ String path_get_absolute(StringView path) {
     DWORD wrote = GetFullPathNameW((LPCWSTR)u16_buf, need, (LPWSTR)abs_buf, NULL);
     free(u16_buf);
 
-    String result = win_utf16_to_utf8(abs_buf, (u64)wrote);
+    String result = win_utf16_to_utf8_str(abs_buf, (u64)wrote);
     free(abs_buf);
 
     return result;
@@ -260,7 +233,7 @@ String path_get_cwd() {
     if (len == 0 || len >= PATH_MAX) {
         return STRING_EMPTY;
     }
-    return win_utf16_to_utf8(buf, len);
+    return win_utf16_to_utf8_str(buf, (u64)len);
 #else
     char buf[PATH_MAX] = { 0 };
     if (!getcwd(buf, sizeof(buf))) {

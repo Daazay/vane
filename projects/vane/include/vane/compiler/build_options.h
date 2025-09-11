@@ -21,7 +21,8 @@ enum BuildCommand{
 };
 
 struct BuildOptions {
-    BuildCommand command;
+    String project_path;
+    String vane_root_path;
 
     // key:   [String, &string_destroy]
     // value: [String, &string_destroy]
@@ -30,9 +31,6 @@ struct BuildOptions {
     // key:   [String, &string_destroy]
     // value: [String, &string_destroy]
     Hashmap defines;
-
-    String root_path;
-    String output_dir;
 
     DiagnosticSeverity log_verbosity;
     bool with_color;
@@ -44,6 +42,8 @@ struct BuildOptions {
     bool dump_symbols;
     bool dump_types;
     bool werror;
+
+    BuildCommand command;
 };
 
 void print_usage(const char* argv0);

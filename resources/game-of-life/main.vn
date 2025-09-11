@@ -1,0 +1,86 @@
+// Game of Life demo that drives the resolver/binder hard :)
+
+import "grid" as g       // alias import for qualified access: g.width(), g.Grid, ...
+import "life" as life    // alias import for rule & step logic
+import "util"            // OPEN import (wrap, min/max become visible unqualified)
+import "util" as U       // ALSO alias import to exercise both forms side-by-side
+
+// A small alias just to exercise TYPEREF_FUN
+type Checksum = (alive: i32, cells: i32) -> i32
+
+// Return a silly checksum just to have a function-type alias in use.
+fun checksum_impl(a: i32, c: i32): i32
+    // braces, binary arithmetic
+    return (a * 131) + (c * 17) + 7
+end
+
+fun main(args: []string): i32
+    // two 2D arrays (values) — we’ll alternate A = step(A) into B and back
+    var A: g.Grid
+    var B: g.Grid
+
+    // seed: use args length if you later add std.len; for now, a fixed number
+    var seed: i32 = 1
+
+    // fill A deterministically (no RNG needed) to avoid extra intrinsics
+    // This loop uses: while, do/while, postfix ++, continue, and wrap(..) from open import.
+    var y: i32 = 0
+    while y < g.height() do
+        var x: i32 = 0
+        do
+            // a simple pattern to start life:
+            // alive when (x + 2*y + seed) % 5 == 0
+            var t: i32 = x + (2 * y) + seed
+            // emulate t % 5 with repeated subtraction to avoid assuming '%' exists
+            while t >= 5 do
+                t = t - 5
+            end
+
+            var alive: bool = (t == 0)
+            // write into A using nested indexing
+            A[y][x] = alive
+
+            x++
+        loop while x < g.width()
+        y++
+    end
+
+    // run N steps; alternate A<->B
+    var steps: i32 = 12
+    var i: i32 = 0
+    while i < steps do
+        // call through alias import (life) and member access
+        B = life.step(A, life.conway)
+
+        // swap by assignment (arrays by value). Also touch alias and open-import mix:
+        // clamp result of a dummy arithmetic (just to use U.max with member form)
+        var w: i32 = g.width()
+        var h: i32 = g.height()
+        var z: i32 = U.max(w - h, h - w)   // alias-qualified
+        z = wrap(z, w + h)                  // open-import (unqualified)
+
+        // flip buffers
+        A = B
+
+        i++
+    end
+
+    // count alive cells; also exercise function-type alias for checksum
+    var alive_count: i32 = 0
+    var total_cells: i32 = g.width() * g.height()
+
+    y = 0
+    while y < g.height() do
+        var x2: i32 = 0
+        while x2 < g.width() do
+            if A[y][x2] then
+                alive_count = alive_count + 1
+            end
+            x2++
+        end
+        y++
+    end
+
+    var f: Checksum = checksum_impl
+    return f(alive_count, total_cells)
+end

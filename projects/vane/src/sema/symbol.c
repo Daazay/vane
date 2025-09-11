@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include "vane/ast/ast_node.h"
+
 #include "vane/sema/type.h"
 #include "vane/sema/type_system.h"
 #include "vane/sema/scope.h"
@@ -28,6 +29,7 @@ Symbol* symbol_create(SymbolKind kind, StringView name, struct ASTNode* ast) {
     symbol->name = name;
     symbol->ast = ast;
 
+    symbol->as.import.target = NULL;
     symbol->as.typed.type = NULL;
     symbol->as.typed.type_state = 0;
 
@@ -49,28 +51,38 @@ static inline Type* try_to_get_type_from_typeref_custom(Scope* scope, ASTNode* n
 
     StringView id = string_get_view(node->as.typeref_custom.value);
 
+    // Fast path
     Type* builtin_type = type_system_get_builtin(ts, id);
     if (builtin_type != NULL) {
         return builtin_type;
     }
 
-    Symbol* sym = scope_lookup(scope, id);
+    Symbol* sym = scope_lookup_any(scope, id);
     if (sym == NULL) {
-        return type_system_get_unresolved_or_create(ts, id);
+        REPORT_ERROR_LOC(rc, "sema", node->loc, "unknown type '" SV_FMT "'.", SV_ARG(id));
+        return NULL;
+    }
+    if (!symbol_resolve_type(sym, ts, rc)) {
+        return NULL;
     }
 
-    if (sym->as.typed.type_state == TYPE_STATE_RESOLVING) {
-        REPORT_ERROR_LOC(rc, "sema", node->loc, "cyclic type alias involving '" SV_FMT "'.", SV_ARG(id));
-        return type_system_get_unresolved_or_create(ts, id);
+    return sym->as.typed.type;
+}
+
+static inline Type* try_to_get_type_from_typeref_qualified(Scope* scope, ASTNode* node, TypeSystem* ts, ReportCollector* rc) {
+    assert(scope != NULL && ts != NULL && node != NULL && rc != NULL);
+
+    if (node->symbol == NULL) {
+        REPORT_ERROR_LOC(rc, "sema", node->loc, "unresolved qualified type.");
+        return type_system_get_unresolved_or_create(ts, STR_LIT("<unresolved>"));
     }
 
-    if (sym->as.typed.type_state != TYPE_STATE_RESOLVED || sym->as.typed.type == NULL) {
-        if (!symbol_resolve_type(sym, ts, rc)) {
-            return type_system_get_unresolved_or_create(ts, id);
-        }
+    // Ensure the symbol’s type is resolved (handles aliases)
+    if (!symbol_resolve_type(node->symbol, ts, rc)) {
+        return type_system_get_unresolved_or_create(ts, node->symbol->name);
     }
 
-    return type_system_get_alias_or_create(ts, id, sym->as.typed.type);
+    return node->symbol->as.typed.type;
 }
 
 static inline Type* try_to_get_type_from_typeref_ptr(Scope* scope, ASTNode* node, TypeSystem* ts, ReportCollector* rc) {
@@ -125,7 +137,7 @@ static inline Type* try_to_get_type_from_typeref_fun(Scope* scope, ASTNode* node
         rt = try_to_get_type_from_ast(scope, node->as.typeref_fun.typeref, ts, rc);
     }
 
-    return type_system_get_fun_or_create(ts, param_types, param_count, rt);
+    return type_system_get_fun_or_create(ts, (const Type**)param_types, param_count, rt);
 }
 
 static inline Type* try_to_get_type_from_stmt_var_item(Scope* scope, ASTNode* node, TypeSystem* ts, ReportCollector* rc) {
@@ -139,11 +151,12 @@ static inline Type* try_to_get_type_from_ast(Scope* scope, ASTNode* node, TypeSy
     assert(scope != NULL && ts != NULL && node != NULL && rc != NULL);
 
     switch (node->kind) {
-    case AST_NODE_TYPEREF_CUSTOM: return try_to_get_type_from_typeref_custom(scope, node, ts, rc);
-    case AST_NODE_TYPEREF_PTR:    return try_to_get_type_from_typeref_ptr(scope, node, ts, rc);
-    case AST_NODE_TYPEREF_ARR:    return try_to_get_type_from_typeref_arr(scope, node, ts, rc);
-    case AST_NODE_TYPEREF_FUN:    return try_to_get_type_from_typeref_fun(scope, node, ts, rc);
-    case AST_NODE_STMT_VAR_ITEM:  return try_to_get_type_from_stmt_var_item(scope, node, ts, rc);
+    case AST_NODE_TYPEREF_CUSTOM:    return try_to_get_type_from_typeref_custom(scope, node, ts, rc);
+    case AST_NODE_TYPEREF_QUALIFIED: return try_to_get_type_from_typeref_qualified(scope, node, ts, rc);
+    case AST_NODE_TYPEREF_PTR:       return try_to_get_type_from_typeref_ptr(scope, node, ts, rc);
+    case AST_NODE_TYPEREF_ARR:       return try_to_get_type_from_typeref_arr(scope, node, ts, rc);
+    case AST_NODE_TYPEREF_FUN:       return try_to_get_type_from_typeref_fun(scope, node, ts, rc);
+    case AST_NODE_STMT_VAR_ITEM:     return try_to_get_type_from_stmt_var_item(scope, node, ts, rc);
     default:
         unreachable();
         return NULL;
@@ -188,7 +201,7 @@ static inline bool symbol_resolve_function_type(Symbol* symbol, TypeSystem* ts, 
     ASTNode* sign = symbol->ast->as.fun_decl.sign;
     Vector* params = &sign->as.fun_sign.params;
 
-    Type** param_types = NULL;
+    const Type** param_types = NULL;
     u32 param_type_count = params->size;
 
     if (param_type_count > 0) {

@@ -31,7 +31,7 @@ ASTNode* ast_parser_parse_identifier(ASTParser* ast_parser);
 
 ASTNode* ast_parser_parse_typeref(ASTParser* ast_parser);
 
-ASTNode* ast_parser_parse_typeref_custom(ASTParser* ast_parser);
+ASTNode* ast_parser_parse_typeref_custom_or_qualified(ASTParser* ast_parser);
 
 ASTNode* ast_parser_parse_typeref_ptr(ASTParser* ast_parser);
 

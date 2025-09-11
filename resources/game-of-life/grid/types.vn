@@ -1,0 +1,11 @@
+// Fixed-size grid
+fun width(): i32
+    return 30
+end
+
+fun height(): i32
+    return 20
+end
+
+// 2D array type alias
+type Grid = [20][30]bool

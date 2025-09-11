@@ -1,0 +1,29 @@
+// A small open-import utility set used across packages
+
+fun min(a: i32, b: i32): i32
+    if a < b then
+        return a
+    else
+        return b
+    end
+end
+
+fun max(a: i32, b: i32): i32
+    if a > b then
+        return a
+    else
+        return b
+    end
+end
+
+// Wrap into [0, max) (works for v in {-inf..inf} with small loops)
+fun wrap(v: i32, m: i32): i32
+    var t: i32 = v
+    while t < 0 do
+        t = t + m
+    end
+    while t >= m do
+        t = t - m
+    end
+    return t
+end

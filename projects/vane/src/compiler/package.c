@@ -37,14 +37,14 @@ void package_destroy(Package* package) {
     free(package);
 }
 
-bool package_resolve_symbol_decls(Package* package, Scope* global_scope) {
+bool package_resolve_symbol_decls(Package* package, Scope* prelude_scope) {
     assert(package != NULL);
 
     if (package->scope != NULL) {
         return true;
     }
 
-    package->scope = scope_create(SCOPE_PACKAGE, global_scope, NULL);
+    package->scope = scope_create(SCOPE_PACKAGE, prelude_scope, NULL);
 
     bool is_good = true;
 

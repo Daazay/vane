@@ -95,18 +95,6 @@ static inline bool split_kv(const char* in, char sep, String* key, String* value
 
 //
 
-static bool handle_output_dir(ArgParser* parser, const char* value) {
-    if (value == NULL) {
-        eprintln("missing value for --output_dir");
-        return false;
-    }
-
-    string_destroy(&parser->options->output_dir);
-    parser->options->output_dir = string_from_cstr(value);
-
-    return true;
-}
-
 static bool handle_collection(ArgParser* parser, const char* value) {
     if (value == NULL) {
         eprintln("missing value for --collection");
@@ -172,7 +160,7 @@ static bool handle_build(ArgParser* parser) {
         return false;
     }
 
-    parser->options->root_path = string_from_cstr(advance_arg(parser));
+    parser->options->project_path = string_from_cstr(advance_arg(parser));
     return true;
 }
 
@@ -182,7 +170,7 @@ static bool handle_parse(ArgParser* parser) {
         return false;
     }
 
-    parser->options->root_path = string_from_cstr(advance_arg(parser));
+    parser->options->project_path = string_from_cstr(advance_arg(parser));
     return true;
 }
 
@@ -223,13 +211,12 @@ static bool handle_no_color(ArgParser* parser, const char* value) {
 }
 
 static OptionSpec general_options[] = {
-    { "output_dir", 'o', true,  &handle_output_dir,  "Set output directory path (default: ./build)." },
-    { "collection", 'c', true,  &handle_collection,  "Add collection in NAME=PATH format." },
-    { "verbosity",  'v', true,  &handle_verbosity,   "Set verbosity level (0=errors only, 1=warning, 2=info, 3=note, 4=debug)." },
-    { "define",     'D', true,  &handle_define,      "Add KEY=VALUE build definitions." },
+    { "collection", 'c', true,  &handle_collection,     "Add collection in NAME=PATH format." },
+    { "verbosity",  'v', true,  &handle_verbosity,      "Set verbosity level (0=errors only, 1=warning, 2=info, 3=note, 4=debug)." },
+    { "define",     'D', true,  &handle_define,         "Add KEY=VALUE build definitions." },
 
-    { "Werror",       0,  false, &handle_werror,      "Treat warnings as errors." },
-    { "no-color",     0,  false, &handle_no_color,    "Turn off colors in diagnostics." },
+    { "Werror",      0,  false, &handle_werror,        "Treat warnings as errors." },
+    { "no-color",    0,  false, &handle_no_color,      "Turn off colors in diagnostics." },
 };
 
 static OptionSpec build_parse_options[] = {
@@ -339,15 +326,14 @@ void print_usage(const char* argv0) {
 BuildOptions build_options_create() {
     BuildOptions build_options = { 0 };
 
-    build_options.command = BUILD_COMMAND_MISSING;
-    build_options.root_path = (String){ 0 };
+    build_options.project_path   = STRING_EMPTY;
+    build_options.vane_root_path = STRING_EMPTY;
 
     build_options.collections = hashmap_create(BUILD_OPTIONS_DEFAULT_COLLECTION_COUNT,
         HASHMAP_KEY_SPECS(String, &string_view_item_hash, &string_view_item_eq, &string_destroy),
         HASHMAP_VALUE_SPECS(String, &string_destroy)
     );
 
-    build_options.output_dir = string_from_cstr("./build");
     build_options.defines = hashmap_create(BUILD_OPTIONS_DEFAULT_DEFINE_COUNT,
         HASHMAP_KEY_SPECS(String, &string_view_item_hash, &string_view_item_eq, &string_destroy),
         HASHMAP_VALUE_SPECS(String, &string_destroy)
@@ -355,6 +341,14 @@ BuildOptions build_options_create() {
 
     build_options.log_verbosity = 0;
     build_options.with_color = is_terminal_support_colors();
+    build_options.werror = false;
+
+    build_options.dump_ast     = false;
+    build_options.dump_ast_dot = false;
+    build_options.dump_symbols = false;
+    build_options.dump_types   = false;
+
+    build_options.command = BUILD_COMMAND_MISSING;
 
     return build_options;
 }
@@ -364,10 +358,11 @@ void build_options_destroy(BuildOptions* build_options) {
         return;
     }
 
-    string_destroy(&build_options->root_path);
+    string_destroy(&build_options->project_path);
+    string_destroy(&build_options->vane_root_path);
+
     hashmap_destroy(&build_options->collections);
     hashmap_destroy(&build_options->defines);
-    string_destroy(&build_options->output_dir);
 }
 
 bool build_options_parse_args(BuildOptions* build_options, int argc, const char** argv) {

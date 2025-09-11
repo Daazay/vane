@@ -231,7 +231,7 @@ Type* type_system_get_unresolved_or_create(TypeSystem* ts, StringView name) {
 
     if (ts->unresolved_types.buckets == NULL) {
         ts->unresolved_types = hashmap_create(TYPE_SYSTEM_DEFAULT_UNRESOLVED_TYPE_COUNT,
-            HASHMAP_KEY_SPECS(StringView, &string_view_item_hash, &string_view_eq_sv, NULL),
+            HASHMAP_KEY_SPECS(StringView, &string_view_item_hash, &string_view_item_eq, NULL),
             HASHMAP_VALUE_SPECS(Type*, &type_destroy)
         );
     }
