@@ -3,11 +3,13 @@
 #include <stdlib.h>
 
 #include "vane/utils/path.h"
-#include "vane/compiler/compiler.h"
 #include "vane/scanner/token_stream.h"
 #include "vane/ast/ast_parser.h"
 #include "vane/ast/ast_visitor/ast_visitor.h"
+#include "vane/compiler/compiler.h"
 #include "vane/sema/scope.h"
+
+#include "vane/diagnostic/diagnostic_tags.h"
 
 static inline FileLoadStatus source_file_load_content(StringView path, String* content, ReportCollector* rc) {
     assert(content != NULL);
@@ -15,13 +17,13 @@ static inline FileLoadStatus source_file_load_content(StringView path, String* c
     FileLoadStatus status = file_content_load(path, (u8**)&content->data, &content->len);
     switch (status) {
     case FILE_LOAD_OK: break;
-    case FILE_LOAD_ERR_EMPTY_CONTENT: REPORT_NOTE(rc,  "driver", "file content is empty: '" SV_FMT"'.", SV_ARG(path)); break;
-    case FILE_LOAD_ERR_INVALID_PATH:  REPORT_ERROR(rc, "driver", "invalid path: '" SV_FMT"'.", SV_ARG(path)); break;
-    case FILE_LOAD_ERR_NOT_FOUND:     REPORT_ERROR(rc, "driver", "path not found: '" SV_FMT"'.", SV_ARG(path)); break;
-    case FILE_LOAD_ERR_ACCESS_DENIED: REPORT_ERROR(rc, "driver", "access denied for path: '" SV_FMT"'.", SV_ARG(path)); break;
-    case FILE_LOAD_ERR_IS_DIR:        REPORT_ERROR(rc, "driver", "path is not a directory: '" SV_FMT"'.", SV_ARG(path)); break;
-    case FILE_LOAD_ERR_OPEN:          REPORT_ERROR(rc, "driver", "failed to open directory: '" SV_FMT"'.", SV_ARG(path)); break;
-    case FILE_LOAD_ERR_READ:          REPORT_ERROR(rc, "driver", "failed to read directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case FILE_LOAD_ERR_EMPTY_CONTENT: REPORT_NOTE(rc,  DIAG_DRIVER_FS, "file content is empty: '" SV_FMT"'.", SV_ARG(path)); break;
+    case FILE_LOAD_ERR_INVALID_PATH:  REPORT_ERROR(rc, DIAG_DRIVER_FS, "invalid path: '" SV_FMT"'.", SV_ARG(path)); break;
+    case FILE_LOAD_ERR_NOT_FOUND:     REPORT_ERROR(rc, DIAG_DRIVER_FS, "path not found: '" SV_FMT"'.", SV_ARG(path)); break;
+    case FILE_LOAD_ERR_ACCESS_DENIED: REPORT_ERROR(rc, DIAG_DRIVER_FS, "access denied for path: '" SV_FMT"'.", SV_ARG(path)); break;
+    case FILE_LOAD_ERR_IS_DIR:        REPORT_ERROR(rc, DIAG_DRIVER_FS, "path is not a directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case FILE_LOAD_ERR_OPEN:          REPORT_ERROR(rc, DIAG_DRIVER_FS, "failed to open directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case FILE_LOAD_ERR_READ:          REPORT_ERROR(rc, DIAG_DRIVER_FS, "failed to read directory: '" SV_FMT"'.", SV_ARG(path)); break;
     default: unreachable(); break;
     }
 
@@ -124,6 +126,9 @@ bool source_file_parse_ast(SourceFile* source_file) {
         const u32 before_idx = ts.idx;
         ASTNode* node = ast_parser_parse_package_entity(&ast_parser);
 
+        vector_push_back(&source_file->ast->as.source_file.entities, &node);
+        source_file->ast->loc.end = node->loc.end;
+
         if (node->kind == AST_NODE_ERROR) {
             is_good = false;
             ast_parser_sync_to_package(&ast_parser);
@@ -147,9 +152,6 @@ bool source_file_parse_ast(SourceFile* source_file) {
             split_import_path(raw, &entry.base, &entry.collection_name, &entry.package_path);
             vector_push_back(&source_file->imports, &entry);
         }
-
-        vector_push_back(&source_file->ast->as.source_file.entities, &node);
-        source_file->ast->loc.end = node->loc.end;
     }
 
     token_stream_destroy(&ts);
@@ -168,7 +170,7 @@ bool source_file_resolve_imports(SourceFile* source_file, struct Compiler* compi
         entry->target = compiler_resolve_import(compiler, source_file, entry);
         if (entry->target == NULL) {
             const ASTNode* path_node = entry->node->as.import_decl.path;
-            REPORT_ERROR_LOC(&compiler->rc, "driver", path_node->loc, "cannot resolve package by path '" SV_FMT "'.", SV_ARG(path_node->as.expr_literal.value));
+            REPORT_ERROR_LOC(&compiler->rc, DIAG_DRIVER_IMPORTS, path_node->loc, "cannot resolve package by path '" SV_FMT "'.", SV_ARG(path_node->as.expr_literal.value));
             is_ok = false;
         }
 
@@ -188,16 +190,16 @@ bool source_file_resolve_imports(SourceFile* source_file, struct Compiler* compi
                 : STRING_VIEW_EMPTY;
 
             if (!is_string_view_empty(key_i) && string_view_eq_sv(key_i, key_j)) {
-                REPORT_ERROR_LOC(&compiler->rc, "module", entry->node->loc, "duplicate import alias '" SV_FMT "' in this file.", SV_ARG(key_i));
-                REPORT_NOTE_LOC(&compiler->rc, "module", prev->node->loc, "the first import with this alias is here.");
+                REPORT_ERROR_LOC(&compiler->rc, DIAG_SEMA_IMPORTS, entry->node->loc, "duplicate import alias '" SV_FMT "' in this file.", SV_ARG(key_i));
+                REPORT_NOTE_LOC(&compiler->rc, DIAG_SEMA_IMPORTS, prev->node->loc, "the first import with this alias is here.");
                 is_ok = false;
             }
         }
 
         // Self-import warning (has no effect)
         if (entry->target == source_file->package) {
-            REPORT_WARNING_LOC(&compiler->rc, "driver", entry->node->loc, "self-import of '" SV_FMT "' has no effect.", SV_ARG(entry->package_path));
-            REPORT_NOTE_LOC(&compiler->rc, "driver", entry->node->loc, "remove the import or alias it if you intended a rename.");
+            REPORT_WARNING_LOC(&compiler->rc, DIAG_SEMA_IMPORTS, entry->node->loc, "self-import of '" SV_FMT "' has no effect.", SV_ARG(entry->package_path));
+            REPORT_NOTE_LOC(&compiler->rc, DIAG_SEMA_IMPORTS, entry->node->loc, "remove the import or alias it if you intended a rename.");
         }
     }
 
@@ -207,9 +209,9 @@ bool source_file_resolve_imports(SourceFile* source_file, struct Compiler* compi
 static inline void warn_shadow(ReportCollector* rc, const ASTNode* node, StringView name, const Symbol* outer) {
     assert(rc != NULL && node != NULL && outer != NULL);
 
-    REPORT_WARNING_LOC(rc, "sema", node->loc, "declaration '"SV_FMT"' shadows a %s from an outer scope.", SV_ARG(name), symbol_kind_get_name(outer->kind));
+    REPORT_WARNING_LOC(rc, DIAG_SEMA_SYMBOLS, node->loc, "declaration '"SV_FMT"' shadows a %s from an outer scope.", SV_ARG(name), symbol_kind_get_name(outer->kind));
     if (outer->ast != NULL) {
-        REPORT_NOTE_LOC(rc, "sema", outer->ast->loc, "the shadowed declaration is here");
+        REPORT_NOTE_LOC(rc, DIAG_SEMA_SYMBOLS, outer->ast->loc, "the shadowed declaration is here");
     }
 }
 
@@ -253,14 +255,14 @@ static inline bool resolve_import_symbols(SourceFile* source_file) {
 
         // Fail on any name that already exists in THIS scope (any namespace)
         if (scope_lookup_current_any(source_file->scope, alias)) {
-            REPORT_ERROR_LOC(source_file->rc, "sema", e->node->loc, "identifier '" SV_FMT "' is already used in this scope; cannot use as import alias.", SV_ARG(alias));
+            REPORT_ERROR_LOC(source_file->rc, DIAG_SEMA_SYMBOLS, e->node->loc, "identifier '" SV_FMT "' is already used in this scope; cannot use as import alias.", SV_ARG(alias));
             is_good = false;
             continue;
         }
 
         // Warn when alias shadows any other declarations (any namespace)
         if (lookup_same_ns_in_outer_scope(source_file->scope, alias, SYMBOL_NS_VALUE | SYMBOL_NS_FUNC | SYMBOL_NS_TYPE | SYMBOL_NS_MODULE)) {
-            REPORT_WARNING_LOC(source_file->rc, "sema", e->node->loc, "import alias '"SV_FMT"' shadows an outer declaration; consider renaming with 'as'.", SV_ARG(alias));
+            REPORT_WARNING_LOC(source_file->rc, DIAG_SEMA_SYMBOLS, e->node->loc, "import alias '"SV_FMT"' shadows an outer declaration; consider renaming with 'as'.", SV_ARG(alias));
         }
 
         Symbol* mod = symbol_create(SYMBOL_IMPORT, alias, e->node);
@@ -305,8 +307,8 @@ static inline void resolve_symbol_decls_pre_fn(ASTNode* parent, ASTNode* node, v
         // duplicate in pacakge?
         Symbol* prev = scope_lookup_current(package_scope, name, mask);
         if (prev != NULL) {
-            REPORT_ERROR_LOC(ctx->rc, "sema", node->loc, "function '"SV_FMT"' is already declared in this package.", SV_ARG(name));
-            REPORT_NOTE_LOC(ctx->rc, "sema", prev->ast->loc, "first declaration is here.");
+            REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_SYMBOLS, node->loc, "function '"SV_FMT"' is already declared in this package.", SV_ARG(name));
+            REPORT_NOTE_LOC(ctx->rc, DIAG_SEMA_SYMBOLS, prev->ast->loc, "first declaration is here.");
 
             ctx->status = false;
             break;
@@ -333,8 +335,8 @@ static inline void resolve_symbol_decls_pre_fn(ASTNode* parent, ASTNode* node, v
         // Duplicate in current function scope
         Symbol* prev = scope_lookup_current(ctx->scope, name, mask);
         if (prev != NULL) {
-            REPORT_ERROR_LOC(ctx->rc, "sema", node->loc, "parameter '"SV_FMT"' already exists in this scope.", SV_ARG(name));
-            REPORT_NOTE_LOC(ctx->rc, "sema", prev->ast->loc, "first declarated here");
+            REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_SYMBOLS, node->loc, "parameter '"SV_FMT"' already exists in this scope.", SV_ARG(name));
+            REPORT_NOTE_LOC(ctx->rc, DIAG_SEMA_SYMBOLS, prev->ast->loc, "first declarated here");
             ctx->status = false;
             break;
         }
@@ -368,8 +370,8 @@ static inline void resolve_symbol_decls_pre_fn(ASTNode* parent, ASTNode* node, v
 
         Symbol* prev = scope_lookup_current(target, name, mask);
         if (prev != NULL) {
-            REPORT_ERROR_LOC(ctx->rc, "sema", node->loc, "type '"SV_FMT"' already exists in this scope.", SV_ARG(name));
-            REPORT_NOTE_LOC(ctx->rc, "sema", prev->ast->loc, "first declared here.");
+            REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_SYMBOLS, node->loc, "type '"SV_FMT"' already exists in this scope.", SV_ARG(name));
+            REPORT_NOTE_LOC(ctx->rc, DIAG_SEMA_SYMBOLS, prev->ast->loc, "first declared here.");
             ctx->status = false;
             break;
         }
@@ -391,8 +393,8 @@ static inline void resolve_symbol_decls_pre_fn(ASTNode* parent, ASTNode* node, v
 
         Symbol* prev = scope_lookup_current(ctx->scope, name, mask);
         if (prev != NULL) {
-            REPORT_ERROR_LOC(ctx->rc, "sema", node->loc, "variable '"SV_FMT"' already exists in this scope.", SV_ARG(name));
-            REPORT_NOTE_LOC(ctx->rc, "sema", prev->ast->loc, "first declared here.");
+            REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_SYMBOLS, node->loc, "variable '"SV_FMT"' already exists in this scope.", SV_ARG(name));
+            REPORT_NOTE_LOC(ctx->rc, DIAG_SEMA_SYMBOLS, prev->ast->loc, "first declared here.");
             ctx->status = false;
             break;
         }
@@ -510,13 +512,13 @@ static inline bool bind_unqualified_outer_scopes(SourceFile* source_file) {
             if (prev == e->target->scope) {
                 already_added = true;
 
-                REPORT_NOTE_LOC(source_file->rc, "module", e->node->loc, "package '" SV_FMT "' is already opened in this file; duplicate import ignored.", SV_ARG(e->target->path));
+                REPORT_NOTE_LOC(source_file->rc, DIAG_SEMA_IMPORTS, e->node->loc, "package '" SV_FMT "' is already opened in this file; duplicate import ignored.", SV_ARG(e->target->path));
                 break;
             }
         }
         if (!already_added) {
             scope_add_open_import(source_file->scope, e->target->scope);
-            REPORT_DEBUG(source_file->rc, "module", "opened import '" SV_FMT "' into file '" SV_FMT "'.", SV_ARG(e->target->path), SV_ARG(source_file->path));
+            REPORT_DEBUG(source_file->rc, DIAG_SEMA_IMPORTS, "opened import '" SV_FMT "' into file '" SV_FMT "'.", SV_ARG(e->target->path), SV_ARG(source_file->path));
         }
     }
 
@@ -544,7 +546,7 @@ static inline bool is_callee_position(const ASTNode* parent, const ASTNode* node
 static inline SymbolNamespaceMask mask_for_place_use(const ASTNode* parent, const ASTNode* node) {
     // foo(...) -> must be a function
     if (is_callee_position(parent, node)) {
-        return SYMBOL_NS_FUNC;
+        return SYMBOL_NS_FUNC | SYMBOL_NS_VALUE;
     }
     // math.fib -> allow module alias (import) here; also allow values (obj.field style)
     if (is_member_object(parent, node)) {
@@ -593,7 +595,7 @@ static inline void bind_symbols_pre_fn(ASTNode* parent, ASTNode* node, void* dat
         StringView name = string_get_view(node->as.typeref_custom.value);
         Symbol* sym = scope_lookup(ctx->scope, name, SYMBOL_NS_TYPE);
         if (sym == NULL) {
-            REPORT_ERROR_LOC(ctx->rc, "sema", node->loc, "unresolved type '" SV_FMT "'.", SV_ARG(name));
+            REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_TYPES, node->loc, "unresolved type '" SV_FMT "'.", SV_ARG(name));
             ctx->status = false;
             break;
         }
@@ -604,7 +606,7 @@ static inline void bind_symbols_pre_fn(ASTNode* parent, ASTNode* node, void* dat
         Vector* segs = &node->as.typeref_qualified.segments;
 
         if (segs->size > 2) {
-            REPORT_ERROR_LOC(ctx->rc, "sema", node->loc, "nested qualified type is not supported yet; yse 'alias.Type'.");
+            REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_TYPES, node->loc, "nested qualified type is not supported yet; yse 'alias.Type'.");
             ctx->scope = false;
             break;
         }
@@ -620,7 +622,7 @@ static inline void bind_symbols_pre_fn(ASTNode* parent, ASTNode* node, void* dat
         if (mod == NULL || mod->kind != SYMBOL_IMPORT ||
             mod->as.import.target == NULL ||
             mod->as.import.target->scope == NULL) {
-            REPORT_ERROR_LOC(ctx->rc, "sema", head->loc, "expected import alias before '.', got '" SV_FMT "'.", SV_ARG(alias));
+            REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_IMPORTS, head->loc, "expected import alias before '.', got '" SV_FMT "'.", SV_ARG(alias));
             ctx->status = false;
             break;
         }
@@ -628,7 +630,7 @@ static inline void bind_symbols_pre_fn(ASTNode* parent, ASTNode* node, void* dat
         // type must exist in target package’s scope
         Symbol* ty = scope_lookup_current(mod->as.import.target->scope, tname, SYMBOL_NS_TYPE);
         if (ty == NULL) {
-            REPORT_ERROR_LOC(ctx->rc, "sema", tail->loc, "type '" SV_FMT "' not found in imported package.", SV_ARG(tname));
+            REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_TYPES, tail->loc, "type '" SV_FMT "' not found in imported package.", SV_ARG(tname));
             ctx->status = false;
             break;
         }
@@ -661,7 +663,7 @@ static inline void bind_symbols_post_fn(ASTNode* parent, ASTNode* node, void* da
         if (object->symbol != NULL && object->symbol->kind == SYMBOL_IMPORT) {
             Package* pkg = object->symbol->as.import.target;
             if (pkg == NULL|| pkg->scope == NULL) {
-                REPORT_ERROR_LOC(ctx->rc, "sema", object->loc, "unresolved import; package not available.");
+                REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_BIND, object->loc, "unresolved import; package not available.");
                 ctx->status = false;
                 break;
             }
@@ -672,10 +674,10 @@ static inline void bind_symbols_post_fn(ASTNode* parent, ASTNode* node, void* da
             Symbol* hit = scope_lookup_current(pkg->scope, mname, mask);
             if (hit == NULL) {
                 if (mask == SYMBOL_NS_FUNC) {
-                    REPORT_ERROR_LOC(ctx->rc, "sema", member->loc, "function '" SV_FMT "' not found in imported package.", SV_ARG(mname));
+                    REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_BIND, member->loc, "function '" SV_FMT "' not found in imported package.", SV_ARG(mname));
                 }
                 else {
-                    REPORT_ERROR_LOC(ctx->rc, "sema", member->loc, "symbol '" SV_FMT "' not found in imported package.", SV_ARG(mname));
+                    REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_BIND, member->loc, "symbol '" SV_FMT "' not found in imported package.", SV_ARG(mname));
                 }
             }
 
@@ -689,10 +691,10 @@ static inline void bind_symbols_post_fn(ASTNode* parent, ASTNode* node, void* da
         if (node->symbol == NULL && !is_member_child(parent, node)) {
             const StringView name = string_get_view(node->as.expr_place.value);
             if (is_callee_position(parent, node)) {
-                REPORT_ERROR_LOC(ctx->rc, "sema", node->loc, "unresolved function '" SV_FMT "'.", SV_ARG(name));
+                REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_BIND, node->loc, "unresolved function '" SV_FMT "'.", SV_ARG(name));
             }
             else {
-                REPORT_ERROR_LOC(ctx->rc, "sema", node->loc, "unresolved identifier '" SV_FMT "'.", SV_ARG(name));
+                REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_BIND, node->loc, "unresolved identifier '" SV_FMT "'.", SV_ARG(name));
             }
             ctx->status = false;
         }

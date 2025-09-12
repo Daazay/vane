@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vane/utils/defines.h"
+#include "vane/utils/string.h"
 #include "vane/utils/string_view.h"
 #include "vane/utils/vector.h"
 
@@ -11,6 +12,8 @@ typedef enum TypeKind TypeKind;
 typedef enum TypeBuiltinKind TypeBuiltinKind;
 
 typedef struct Type Type;
+
+#define TYPE_UNWRAP_GUARD   256
 
 enum TypeResolveState {
     TYPE_STATE_UNRESOLVED = 0,
@@ -33,10 +36,11 @@ enum TypeKind {
 };
 
 enum TypeBuiltinKind {
-    TYPE_BUITLIN_UNKNOWN = 0,
+    TYPE_BUILTIN_UNKNOWN = 0,
 
     TYPE_BUILTIN_VOID,
     TYPE_BUILTIN_BOOL,
+    TYPE_BUILTIN_UNSIZED_INT, // used for literals
     TYPE_BUILTIN_U8,
     TYPE_BUILTIN_I8,
     TYPE_BUILTIN_U16,
@@ -79,6 +83,14 @@ struct Type {
 
 const char* type_kind_get_name(TypeKind kind);
 
+const char* type_builtin_kind_get_name(TypeBuiltinKind kind);
+
+bool is_type_builtin_kind_signed(TypeBuiltinKind kind);
+
+bool is_type_builtin_kind_unsigned(TypeBuiltinKind kind);
+
+u32 type_builtin_kind_get_size(TypeBuiltinKind kind);
+
 Type* type_create(TypeKind kind, u32 size, u32 alignment);
 
 void type_destroy(Type* type);
@@ -100,3 +112,23 @@ Type* type_unresolved_create(StringView name);
 bool type_eq_type(const Type* type1, const Type* type2);
 
 u32 type_get_hash(const Type* type);
+
+//
+
+String type_to_str(const Type* type);
+
+const Type* type_unwrap(const Type* type);
+
+bool is_type_builtin(const Type* type, TypeBuiltinKind kind);
+
+bool is_type_any(const Type* type);
+
+bool is_type_bool(const Type* type);
+
+bool is_type_unsized_integer(const Type* type);
+
+bool is_type_sized_integer(const Type* type, TypeBuiltinKind* out);
+
+bool is_type_integer(const Type* type);
+
+bool is_type_compatible(const Type* to, const Type* from);

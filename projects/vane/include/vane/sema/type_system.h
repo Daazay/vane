@@ -45,6 +45,6 @@ Type* type_system_get_slice_or_create(TypeSystem* ts, const Type* elem);
 
 Type* type_system_get_alias_or_create(TypeSystem* ts, StringView name, const Type* target);
 
-Type* type_system_get_fun_or_create(TypeSystem* ts, const Type** params, u32 param_count, const Type* ret);
+Type* type_system_get_fun_or_create(TypeSystem* ts, Type** params, u32 param_count, const Type* ret);
 
 Type* type_system_get_unresolved_or_create(TypeSystem* ts, StringView name);

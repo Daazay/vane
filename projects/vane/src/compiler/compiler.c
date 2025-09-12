@@ -12,6 +12,8 @@
 
 #include "vane/sema/scope.h"
 
+#include "vane/diagnostic/diagnostic_tags.h"
+
 Compiler compiler_create(BuildOptions* build_options) {
     assert(build_options != NULL);
 
@@ -145,14 +147,14 @@ bool compiler_run_command(Compiler* compiler) {
     }
 
     if (is_string_view_empty(string_get_view(compiler->build_options->project_path))) {
-        REPORT_ERROR(&compiler->rc, "driver", "no package path provided.");
+        REPORT_ERROR(&compiler->rc, DIAG_DRIVER_CONFIG, "no package path provided.");
         return false;
     }
 
     // Load entry package
     Package* root = compiler_load_package(compiler, string_get_view(compiler->build_options->project_path), false);
     if (root == NULL) {
-        REPORT_ERROR(&compiler->rc, "driver", "failed to load project '"SV_FMT"'.", SV_ARG(compiler->build_options->project_path));
+        REPORT_ERROR(&compiler->rc, DIAG_DRIVER_PROJECT, "failed to load project '"SV_FMT"'.", SV_ARG(compiler->build_options->project_path));
         return false;
     }
 
@@ -167,7 +169,7 @@ bool compiler_run_command(Compiler* compiler) {
         break;
 
     default:
-        REPORT_ERROR(&compiler->rc, "driver", "unsupported command.");
+        REPORT_ERROR(&compiler->rc, DIAG_DRIVER_CONFIG, "unsupported command.");
         status = false;
         break;
     }
@@ -203,13 +205,13 @@ static inline DirListStatus compiler_get_entries_in_dir(Vector* entries, StringV
     DirListStatus status = directory_list(path, entries, false);
     switch (status) {
     case DIR_LIST_OK: break;
-    case DIR_LIST_ERR_INVALID_PATH: REPORT_ERROR(rc, "driver", "invalid path: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_NOT_FOUND: REPORT_ERROR(rc, "driver", "path not found: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_ACCESS_DENIED: REPORT_ERROR(rc, "driver", "access denied for path: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_NOT_DIR: REPORT_ERROR(rc, "driver", "path is not a directory: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_OPEN: REPORT_ERROR(rc, "driver", "failed to open directory: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_READ: REPORT_ERROR(rc, "driver", "failed to read directory: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_STAT: REPORT_ERROR(rc, "driver", "failed to stat directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_INVALID_PATH: REPORT_ERROR(rc, DIAG_DRIVER_FS, "invalid path: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_NOT_FOUND: REPORT_ERROR(rc, DIAG_DRIVER_FS, "path not found: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_ACCESS_DENIED: REPORT_ERROR(rc, DIAG_DRIVER_FS, "access denied for path: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_NOT_DIR: REPORT_ERROR(rc, DIAG_DRIVER_FS, "path is not a directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_OPEN: REPORT_ERROR(rc, DIAG_DRIVER_FS, "failed to open directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_READ: REPORT_ERROR(rc, DIAG_DRIVER_FS, "failed to read directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_STAT: REPORT_ERROR(rc, DIAG_DRIVER_FS, "failed to stat directory: '" SV_FMT"'.", SV_ARG(path)); break;
     }
 
     return status;
@@ -224,12 +226,12 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath, bool is_c
 
     StringView package_name = path_get_basename(abs_path_sv);
 
-    REPORT_DEBUG(&compiler->rc, "driver", "discovering packages in '"SV_FMT"'.", SV_ARG(abs_path_sv));
+    REPORT_DEBUG(&compiler->rc, DIAG_DRIVER_FS, "discovering packages in '"SV_FMT"'.", SV_ARG(abs_path_sv));
 
-    // Check if this path has already been processed
+    // Check if this path has already been procesed
     Package* existing_package = hashmap_get(&compiler->packages, &abs_path_sv);
     if (existing_package != NULL) {
-        REPORT_INFO(&compiler->rc, "driver", "package '" SV_FMT "' is already loaded", SV_ARG(package_name));
+        REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "package '" SV_FMT "' is already loaded", SV_ARG(package_name));
         string_destroy(&abs_path);
         return existing_package;
     }
@@ -261,7 +263,7 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath, bool is_c
         if (entry->is_dir) {
             Package* subpackage = compiler_load_package(compiler, string_get_view(entry->fullpath), is_core);
             if (subpackage == NULL) {
-                REPORT_NOTE(&compiler->rc, "driver", "skipping '"SV_FMT"' (no package created)", SV_ARG(basename));
+                REPORT_NOTE(&compiler->rc, DIAG_DRIVER_PROJECT, "skipping '"SV_FMT"' (no package created)", SV_ARG(basename));
                 continue;
             }
 
@@ -273,7 +275,7 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath, bool is_c
             vector_push_back(&package->subpackages, &subpackage);
             subpackage->parent_package = package;
 
-            REPORT_INFO(&compiler->rc, "driver", "subpackage '" SV_FMT "' added to package '" SV_FMT "'", SV_ARG(basename), SV_ARG(package_name));
+            REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "subpackage '" SV_FMT "' added to package '" SV_FMT "'", SV_ARG(basename), SV_ARG(package_name));
         }
         // Process source files
         else {
@@ -289,7 +291,7 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath, bool is_c
                 vector_push_back(&compiler->source_files_queue, &source_file);
 
                 source_file->package = package;
-                REPORT_INFO(&compiler->rc, "driver", "added source file '" SV_FMT"'.", SV_ARG(basename));
+                REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "added source file '" SV_FMT"'.", SV_ARG(basename));
             }
 
             // Clear entry path since ownership transferred
@@ -301,7 +303,7 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath, bool is_c
 
     if (package != NULL) {
         hashmap_insert(&compiler->packages, &abs_path, &package);
-        REPORT_INFO(&compiler->rc, "driver", "registered package '" SV_FMT"'.", SV_ARG(package_name));
+        REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "registered package '" SV_FMT"'.", SV_ARG(package_name));
 
         package->is_core = is_core;
     }
@@ -319,7 +321,7 @@ Package* compiler_resolve_import(Compiler* compiler, SourceFile* source_file, co
     case IMPORT_BASE_COLLECTION: {
         StringView root = compiler_get_collection_path(compiler, e->collection_name);
         if (is_string_view_empty(root)) {
-            REPORT_ERROR(&compiler->rc, "driver", "could not resolve collection '"SV_FMT"'.", SV_ARG(e->collection_name));
+            REPORT_ERROR(&compiler->rc, DIAG_DRIVER_IMPORTS, "could not resolve collection '"SV_FMT"'.", SV_ARG(e->collection_name));
             return NULL;
         }
 
@@ -330,13 +332,13 @@ Package* compiler_resolve_import(Compiler* compiler, SourceFile* source_file, co
 
     case IMPORT_BASE_PROJECT_ROOT: {
         if (e->package_path.len == 0) {
-            REPORT_ERROR(&compiler->rc, "driver", "root import must have a path, e.g. \":grid\".");
+            REPORT_ERROR(&compiler->rc, DIAG_DRIVER_IMPORTS, "root import must have a path, e.g. \":grid\".");
             return NULL;
         }
 
         StringView root_dir = string_get_view(compiler->build_options->project_path);
         if (is_string_view_empty(root_dir)) {
-            REPORT_ERROR(&compiler->rc, "driver", "project root not set.");
+            REPORT_ERROR(&compiler->rc, DIAG_DRIVER_PROJECT, "project root not set.");
             return NULL;
         }
 
@@ -389,15 +391,15 @@ Package* compiler_load_core_collection(Compiler* compiler) {
 
     StringView vane_root_path = compiler_resolve_vane_root(compiler);
     if (is_string_view_empty(vane_root_path)) {
-        REPORT_NOTE(&compiler->rc, "driver", "no core collection configured (use --collection vane_root=<path> or set VANE_ROOT).");
+        REPORT_NOTE(&compiler->rc, DIAG_DRIVER_PROJECT, "no core collection configured (use --collection vane_root=<path> or set VANE_ROOT).");
         return NULL;
     }
 
-    REPORT_INFO(&compiler->rc, "driver", "loading core collection from '" SV_FMT "'.", SV_ARG(vane_root_path));
+    REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "loading core collection from '" SV_FMT "'.", SV_ARG(vane_root_path));
 
     Package* core = compiler_load_package(compiler, vane_root_path, true);
     if (core == NULL) {
-        REPORT_ERROR(&compiler->rc, "driver", "failed to load core collection from '" SV_FMT "'.", SV_ARG(vane_root_path));
+        REPORT_ERROR(&compiler->rc, DIAG_DRIVER_PROJECT, "failed to load core collection from '" SV_FMT "'.", SV_ARG(vane_root_path));
         return NULL;
     }
 

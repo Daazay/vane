@@ -1,5 +1,7 @@
 #include "vane/sema/type_system.h"
 
+#include <stdlib.h>
+
 static inline void type_system_set_builtin(TypeSystem* ts, TypeBuiltinKind kind, u32 size, u32 align) {
     ts->builtin_types[kind] = type_builtin_create(kind, size, align);
 }
@@ -17,6 +19,7 @@ static inline void type_system_init_builtins_for_target(TypeSystem* ts) {
     case TARGET_ARCH_X86_64: {
         SET_BUILTIN("void", TYPE_BUILTIN_VOID, 0, 1);
         SET_BUILTIN("bool", TYPE_BUILTIN_BOOL, 1, 1);
+        SET_BUILTIN("unsized int", TYPE_BUILTIN_UNSIZED_INT, 0, 0);
         SET_BUILTIN("u8",   TYPE_BUILTIN_U8,   1, 1);
         SET_BUILTIN("i8",   TYPE_BUILTIN_I8,   1, 1);
         SET_BUILTIN("u16",  TYPE_BUILTIN_U16,  2, 2);
@@ -188,10 +191,10 @@ Type* type_system_get_alias_or_create(TypeSystem* ts, StringView name, const Typ
     return type;
 }
 
-Type* type_system_get_fun_or_create(TypeSystem* ts, const Type** params, u32 param_count, const Type* ret) {
+Type* type_system_get_fun_or_create(TypeSystem* ts, Type** params, u32 param_count, const Type* ret) {
     assert(ts != NULL && ((params != NULL && param_count > 0) || params == NULL) && ret != NULL);
 
-    Type t = { .kind = TYPE_FUNCTION, .as.fun.params = params, .as.fun.param_count = param_count, .as.fun.ret = ret, };
+    Type t = { .kind = TYPE_FUNCTION, .as.fun.params = (const Type**)params, .as.fun.param_count = param_count, .as.fun.ret = ret, };
     Type* target_type = &t;
 
     Type* existing = NULL;
@@ -200,10 +203,14 @@ Type* type_system_get_fun_or_create(TypeSystem* ts, const Type** params, u32 par
     }
 
     if (existing != NULL) {
+        // we pass here heap allocated params,
+        // we dont know whether type which will be returned as newbord or existed
+        // so need to free heap here
+        free(params);
         return existing;
     }
 
-    Type* type = type_fun_create(ts, params, param_count, ret);
+    Type* type = type_fun_create(ts, (const Type**)params, param_count, ret);
 
     if (ts->function_types.buckets == NULL) {
         ts->function_types = hashset_create(TYPE_SYSTEM_DEFAULT_FUNCTION_TYPE_COUNT,

@@ -12,9 +12,9 @@ end
 // One full step: return a fresh grid
 fun step(src: g.Grid, rule: LifeRule): g.Grid
     var dst: g.Grid
-    var y: i32 = 0
+    var y = 0
     while y < g.height() do
-        var x: i32 = 0
+        var x = 0
         while x < g.width() do
             dst[y][x] = next_cell(src, y, x, rule)
             x++

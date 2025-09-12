@@ -421,7 +421,7 @@ ASTNode* ast_parser_parse_typeref_custom_or_qualified(ASTParser* ast_parser) {
 
     token_stream_move_forward(ast_parser->ts);
 
-    Vector segments = vector_create(2, VECTOR_SPECS(ASTNode*, NULL));
+    Vector segments = vector_create(2, VECTOR_SPECS(ASTNode*, &ast_node_destroy));
 
     ASTNode* seg = ast_node_identifier_create(string_from_sv(value), loc);
     vector_push_back(&segments, &seg);
