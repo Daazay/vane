@@ -405,7 +405,8 @@ static inline Type* try_to_get_type_from_typeref_ptr(Scope* scope, ASTNode* node
     assert(scope != NULL && ts != NULL && node != NULL && rc != NULL);
 
     Type* base = try_to_get_type_from_ast(scope, node->as.typeref_ptr.typeref, ts, rc);
-    return type_system_get_pointer_or_create(ts, base);
+
+    return base != NULL ? type_system_get_pointer_or_create(ts, base) : NULL;
 }
 
 static inline Type* try_to_get_type_from_typeref_arr(Scope* scope, ASTNode* node, TypeSystem* ts, ReportCollector* rc) {
@@ -518,7 +519,9 @@ static inline bool symbol_resolve_typealias_type(Symbol* symbol, TypeSystem* ts,
     StringView name = string_get_view(symbol->ast->as.stmt_typealias_decl.id->as.id.value);
 
     Type* target_type = try_to_get_type_from_ast(symbol->scope, ast_type, ts, rc);
-    symbol->as.typed.type = type_system_get_alias_or_create(ts, name, target_type);
+    if (target_type != NULL) {
+        symbol->as.typed.type = type_system_get_alias_or_create(ts, name, target_type);
+    }
 
     return true;
 }
