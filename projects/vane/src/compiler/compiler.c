@@ -37,20 +37,127 @@ static inline bool compiler_should_halt(const Compiler* compiler) {
     return false;
 }
 
-static inline void compiler_dump_requested(const Compiler* compiler) {
+static inline bool compiler_create_emit_directory_if_needed(BuildOptions* build_options, ReportCollector* rc) {
+    assert(build_options != NULL && rc != NULL);
+
+    if (!is_path_absolute(string_get_view(build_options->emit_dir))) {
+        String abs = path_get_absolute(string_get_view(build_options->emit_dir));
+        string_destroy(&build_options->emit_dir);
+        build_options->emit_dir = abs;
+    }
+
+    if (is_path_exist(string_get_view(build_options->emit_dir))) {
+        return true;
+    }
+
+    // attempt to create directory
+    StringView emit_sv = string_get_view(build_options->emit_dir);
+    DirCreateStatus status = directory_create_recursive(emit_sv);
+    switch (status) {
+    case DIR_CREATE_OK:
+        REPORT_DEBUG(rc, DIAG_SEMA, "directory for dumps '" SV_FMT "' was successfully created.", SV_ARG(emit_sv));
+        break;
+    case DIR_CREATE_ERR_INVALID_PATH:
+        REPORT_WARNING(rc, DIAG_SEMA, "failed to create directory for dumps '" SV_FMT "': invalid path.", SV_ARG(emit_sv));
+        break;
+    case DIR_CREATE_ERR_EXISTS:
+        REPORT_DEBUG(rc, DIAG_SEMA, "directory for dumps '" SV_FMT "' already exists.", SV_ARG(emit_sv));
+        break;
+    case DIR_CREATE_ERR_ACCESS_DENIED:
+        REPORT_WARNING(rc, DIAG_SEMA, "failed to create directory for dumps '" SV_FMT "': access denied.", SV_ARG(emit_sv));
+        break;
+    case DIR_CREATE_ERR_FAILED:
+        REPORT_WARNING(rc, DIAG_SEMA, "failed to create directory for dumps '" SV_FMT "'.", SV_ARG(emit_sv));
+        break;
+    default:
+        unreachable();
+        break;
+    }
+
+    return status == DIR_CREATE_OK || status == DIR_CREATE_ERR_EXISTS;
+}
+
+static inline bool compiler_get_package_emit_dir(const Compiler* compiler, const Package* package, String* out_dir) {
+    assert(compiler != NULL && package != NULL && out_dir != NULL);
+
+    *out_dir = STRING_EMPTY;
+
+    String rel = path_get_relative(string_get_view(compiler->build_options->project_path), package->path);
+    StringView rel_sv = string_get_view(rel);
+
+    if (is_string_view_empty(rel_sv)) {
+        rel_sv = path_get_basename(package->path);
+    }
+
+    *out_dir = path_join_sv(string_get_view(compiler->build_options->emit_dir), rel_sv);
+    StringView out_dir_sv = string_get_view(*out_dir);
+
+    string_destroy(&rel);
+
+    DirCreateStatus status = directory_create_recursive(out_dir_sv);
+    switch (status) {
+    case DIR_CREATE_OK:
+        REPORT_DEBUG((ReportCollector*)&compiler->rc, DIAG_DRIVER_FS, "created directory '" SV_FMT "'.", SV_ARG(out_dir_sv));
+        break;
+    case DIR_CREATE_ERR_EXISTS:
+        REPORT_INFO((ReportCollector*)&compiler->rc, DIAG_DRIVER_FS, "directory '" SV_FMT "' already exists.", SV_ARG(out_dir_sv));
+        break;
+    case DIR_CREATE_ERR_ACCESS_DENIED:
+        REPORT_ERROR((ReportCollector*)&compiler->rc, DIAG_DRIVER_FS, "access denied creating '" SV_FMT "'.", SV_ARG(out_dir_sv));
+        break;
+    case DIR_CREATE_ERR_INVALID_PATH:
+        REPORT_ERROR((ReportCollector*)&compiler->rc, DIAG_DRIVER_FS, "invalid path while creating '" SV_FMT "'.", SV_ARG(out_dir_sv));
+        break;
+
+    default:
+        unreachable();
+        break;
+    }
+    return status == DIR_CREATE_OK || status == DIR_CREATE_ERR_EXISTS;
+}
+
+static inline String compiler_build_package_emit_filepath(StringView emit_dir, StringView name, StringView ext) {
+    StringBuilder sb = string_builder_create(name.len + ext.len);
+    string_builder_append_sv(&sb, name);
+    string_builder_append_sv(&sb, ext);
+
+    StringView fname = string_builder_get_view(sb);
+    String fp = path_join_sv(emit_dir, fname);
+    string_builder_destroy(&sb);
+
+    return fp;
+}
+
+static inline bool compiler_wants_console(const Compiler* c) {
+    return c->build_options->emit_out_mode == EMIT_OUT_CONSOLE ||
+           c->build_options->emit_out_mode == EMIT_OUT_BOTH;
+}
+static inline bool compiler_wants_files(const Compiler* c) {
+    return c->build_options->emit_out_mode == EMIT_OUT_FILE ||
+           c->build_options->emit_out_mode == EMIT_OUT_BOTH;
+}
+
+static inline void compiler_emit_requested(const Compiler* compiler) {
     assert(compiler != NULL && compiler->build_options != NULL);
 
-    if (IS_FLAG_SET(compiler->build_options->dump_mask, DUMP_FLAG_AST_TEXT)) {
-        compiler_dump_ast_text(compiler);
+    // Only prepare directory if we will write files.
+    if (compiler_wants_files(compiler) && compiler->build_options->emit_mask != EMIT_FLAG_NONE) {
+        if (!compiler_create_emit_directory_if_needed(compiler->build_options, (ReportCollector*)&compiler->rc)) {
+            REPORT_DEBUG((ReportCollector*)&compiler->rc, DIAG_DRIVER_PROJECT, "failed to prepare dump directory. File dumps will be skipped.");
+        }
     }
-    if (IS_FLAG_SET(compiler->build_options->dump_mask, DUMP_FLAG_AST_DOT)) {
-        compiler_dump_ast_dot(compiler);
+
+    if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_AST_TEXT)) {
+        compiler_emit_ast_text(compiler);
     }
-    if (IS_FLAG_SET(compiler->build_options->dump_mask, DUMP_FLAG_SYMBOLS)) {
-        compiler_dump_symbols(compiler);
+    if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_AST_DOT)) {
+        compiler_emit_ast_dot(compiler);
     }
-    if (IS_FLAG_SET(compiler->build_options->dump_mask, DUMP_FLAG_TYPES)) {
-        compiler_dump_types(compiler);
+    if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_SYMBOLS)) {
+        compiler_emit_symbols(compiler);
+    }
+    if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_TYPES)) {
+        compiler_emit_types(compiler);
     }
 }
 
@@ -294,7 +401,7 @@ bool compiler_run_command(Compiler* compiler) {
         return false;
     }
 
-    compiler_dump_requested(compiler);
+    compiler_emit_requested(compiler);
     return true;
 }
 
@@ -465,41 +572,180 @@ Package* compiler_resolve_import(Compiler* compiler, SourceFile* source_file, co
     return pkg;
 }
 
-void compiler_dump_ast_text(const Compiler* compiler) {
+static inline bool compiler_open_file_for_write(FileWriter* w, StringView path, bool overwrite_content, ReportCollector* rc) {
+    assert(w != NULL && rc != NULL);
+
+    FileWriteStatus status = file_writer_open(w, path, overwrite_content);
+    switch (status) {
+    case FILE_WRITE_OK:
+        REPORT_DEBUG(rc, DIAG_SEMA, "successfully opened file '" SV_FMT "' for writing%s.",
+            SV_ARG(path),
+            overwrite_content ? " (overwriting existing content)" : ""
+        );
+        break;
+    case FILE_WRITE_ERR_INVALID_PATH:
+        REPORT_ERROR(rc, DIAG_SEMA, "cannot open file '" SV_FMT "' for writing: invalid path.",
+            SV_ARG(path)
+        );
+        break;
+    case FILE_WRITE_ERR_NOT_FOUND:
+        REPORT_ERROR(rc, DIAG_SEMA, "cannot open file '" SV_FMT "' for writing: directory does not exist.",
+            SV_ARG(path)
+        );
+        break;
+    case FILE_WRITE_ERR_ACCESS_DENIED:
+        REPORT_ERROR(rc, DIAG_SEMA, "cannot open '" SV_FMT "' for writing: path is a directory.",
+            SV_ARG(path)
+        );
+        break;
+    case FILE_WRITE_ERR_OPEN:
+        REPORT_ERROR(rc, DIAG_SEMA, "failed to open '" SV_FMT "' for writing due to an unknown I/O error.",
+            SV_ARG(path)
+        );
+        break;
+    case FILE_WRITE_ERR_WRITE:
+        REPORT_ERROR(rc, DIAG_SEMA, "failed to write to file '" SV_FMT "'.", SV_ARG(path));
+        break;
+
+    default:
+        unreachable();
+        break;
+    }
+
+    return status == FILE_WRITE_OK;
+}
+
+static inline String compiler_build_emit_filepath(const BuildOptions* build_options, StringView name, StringView ext) {
+    assert(build_options != NULL);
+
+    StringBuilder sb = string_builder_create(name.len + ext.len);
+    string_builder_append_sv(&sb, name);
+    string_builder_append_sv(&sb, ext);
+
+    StringView filename = string_builder_get_view(sb);
+    String filepath = path_join_sv(string_get_view(build_options->emit_dir), filename);
+
+    string_builder_destroy(&sb);
+    return filepath;
+}
+
+void compiler_emit_ast_text(const Compiler* compiler) {
     assert(compiler != NULL);
 
     HashmapIterator package_it = hashmap_get_it(&compiler->packages);
     Package* package = NULL;
 
+    FileWriter cw = { 0 };
+    bool to_console = compiler_wants_console(compiler);
+    if (to_console) {
+        cw = file_writer_get_stdout();
+    }
+
     while (hashmap_it_next(&package_it, NULL, &package)) {
-        if (package == NULL) continue;
+        if (package == NULL) {
+            continue;
+        }
+
+        if (to_console) {
+            file_writer_write_format(&cw, "package: " SV_FMT "\n", SV_ARG(package->path));
+        }
+
+        // prepare per-package emit dir
+        String package_out = STRING_EMPTY;
+        const bool to_files = compiler_wants_files(compiler) && compiler_get_package_emit_dir(compiler, package, &package_out);
 
         for (u32 i = 0; i < package->source_files.size; ++i) {
-            const SourceFile* sf = vector_at(package->source_files, i);
-            printf("[file: " SV_FMT "]\n", SV_ARG(sf->path));
-            dump_ast_text(sf->ast);
+            const SourceFile* source_file = vector_at(package->source_files, i);
+
+            if (to_console) {
+                file_writer_write_format(&cw, "file: " SV_FMT "\n", SV_ARG(source_file->path));
+                dump_ast_text(&cw, source_file->ast);
+                file_writer_write_eol(&cw);
+            }
+
+            // file output?
+            if (to_files) {
+                // keep original filename (stem) inside the per-package folder
+                StringView stem = path_get_stem(source_file->path);
+                String out_filepath = compiler_build_package_emit_filepath(string_get_view(package_out), stem, STR_LIT(".ast.txt"));
+
+                FileWriter fw = { 0 };
+                if (compiler_open_file_for_write(&fw, string_get_view(out_filepath), true, (ReportCollector*)&compiler->rc)) {
+                    dump_ast_text(&fw, source_file->ast);
+                    file_writer_close(&fw);
+                }
+                string_destroy(&out_filepath);
+            }
+        }
+
+        string_destroy(&package_out);
+
+        if (to_console) {
+            file_writer_write_eol(&cw);
+            file_writer_flush(&cw);
         }
     }
 }
 
-void compiler_dump_ast_dot(const Compiler* compiler) {
+void compiler_emit_ast_dot(const Compiler* compiler) {
     assert(compiler != NULL);
 
     HashmapIterator package_it = hashmap_get_it(&compiler->packages);
     Package* package = NULL;
 
+    FileWriter cw = { 0 };
+    bool to_console = compiler_wants_console(compiler);
+    if (to_console) {
+        cw = file_writer_get_stdout();
+    }
+
     while (hashmap_it_next(&package_it, NULL, &package)) {
-        if (package == NULL) continue;
+        if (package == NULL) {
+            continue;
+        }
+
+        if (to_console) {
+            file_writer_write_format(&cw, "package: " SV_FMT "\n", SV_ARG(package->path));
+        }
+
+        // prepare per-package emit dir
+        String package_out = STRING_EMPTY;
+        const bool to_files = compiler_wants_files(compiler) && compiler_get_package_emit_dir(compiler, package, &package_out);
 
         for (u32 i = 0; i < package->source_files.size; ++i) {
-            const SourceFile* sf = vector_at(package->source_files, i);
-            printf("[file: " SV_FMT "]\n", SV_ARG(sf->path));
-            dump_ast_dot(sf->ast);
+            const SourceFile* source_file = vector_at(package->source_files, i);
+
+            if (to_console) {
+                file_writer_write_format(&cw, "file: " SV_FMT "\n", SV_ARG(source_file->path));
+                dump_ast_dot(&cw, source_file->ast);
+                file_writer_write_eol(&cw);
+            }
+
+            // file output?
+            if (to_files) {
+                // keep original filename (stem) inside the per-package folder
+                StringView stem = path_get_stem(source_file->path);
+                String out_filepath = compiler_build_package_emit_filepath(string_get_view(package_out), stem, STR_LIT(".ast.dot"));
+
+                FileWriter fw = { 0 };
+                if (compiler_open_file_for_write(&fw, string_get_view(out_filepath), true, (ReportCollector*)&compiler->rc)) {
+                    dump_ast_dot(&fw, source_file->ast);
+                    file_writer_close(&fw);
+                }
+                string_destroy(&out_filepath);
+            }
+        }
+
+        string_destroy(&package_out);
+
+        if (to_console) {
+            file_writer_write_eol(&cw);
+            file_writer_flush(&cw);
         }
     }
 }
 
-static void compiler_dump_package_scopes(const Package* package) {
+static void compiler_emit_package_scopes(const Package* package) {
     if (package->scope == NULL || (package->scope->scopes.size == 0 && package->scope->symbol_sets.size == 0)) {
         return;
     }
@@ -510,7 +756,7 @@ static void compiler_dump_package_scopes(const Package* package) {
     putchar('\n');
 }
 
-void compiler_dump_symbols(const Compiler* compiler) {
+void compiler_emit_symbols(const Compiler* compiler) {
     assert(compiler != NULL);
 
     HashmapIterator it = hashmap_get_it(&compiler->packages);
@@ -520,11 +766,11 @@ void compiler_dump_symbols(const Compiler* compiler) {
         if (pkg == NULL || pkg->is_core) {
             continue;
         }
-        compiler_dump_package_scopes(pkg);
+        compiler_emit_package_scopes(pkg);
     }
 }
 
-static void compiler_dump_package_types(const Package* package) {
+static void compiler_emit_package_types(const Package* package) {
     if (!package || !package->scope) return;
     printf("package: " SV_FMT "\n", SV_ARG(package->path));
     puts("scope:");
@@ -532,7 +778,7 @@ static void compiler_dump_package_types(const Package* package) {
     putchar('\n');
 }
 
-void compiler_dump_types(const Compiler* compiler) {
+void compiler_emit_types(const Compiler* compiler) {
     assert(compiler != NULL);
 
     HashmapIterator it = hashmap_get_it(&compiler->packages);
@@ -546,7 +792,7 @@ void compiler_dump_types(const Compiler* compiler) {
         if (pkg->is_core) {
             continue;
         }
-        compiler_dump_package_types(pkg);
+        compiler_emit_package_types(pkg);
     }
 }
 

@@ -3,6 +3,7 @@
 #include "vane/utils/defines.h"
 #include "vane/utils/unicode.h"
 
+struct String;
 typedef struct StringView StringView;
 
 #define STR_LIT(S)        (StringView) { .data = (const u8*)S, .len = sizeof(S) - 1, }
@@ -76,6 +77,10 @@ u64 string_view_count_runes(StringView sv);
 Rune string_view_rune_at_byte(StringView sv, u64 byte_idx, u32* rune_len);
 
 Rune string_view_rune_at(StringView sv, u64 idx, u64* byte_idx, u32* rune_len);
+
+bool string_view_utf8_to_utf16_str(StringView sv, struct String* out);
+
+bool string_view_utf16_to_utf8_str(StringView sv, struct String* out);
 
 // -- trim --
 

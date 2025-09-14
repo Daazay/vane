@@ -60,15 +60,15 @@ Package* compiler_load_package(Compiler* compiler, StringView dirpath, bool is_c
 
 Package* compiler_resolve_import(Compiler* compiler, SourceFile* source_file, const ImportEntry* e);
 
-// dump functions
+// emit functions
 
-void compiler_dump_ast_text(const Compiler* compiler);
+void compiler_emit_ast_text(const Compiler* compiler);
 
-void compiler_dump_ast_dot(const Compiler* compiler);
+void compiler_emit_ast_dot(const Compiler* compiler);
 
-void compiler_dump_symbols(const Compiler* compiler);
+void compiler_emit_symbols(const Compiler* compiler);
 
-void compiler_dump_types(const Compiler* compiler);
+void compiler_emit_types(const Compiler* compiler);
 
 //
 

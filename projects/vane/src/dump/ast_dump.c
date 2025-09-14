@@ -3,22 +3,31 @@
 #include <stdio.h>
 
 #include "vane/ast/ast_visitor.h"
+#include "vane/scanner/token_kind.h"
 
 typedef struct ASTDumpTextCtx ASTDumpTextCtx;
+typedef struct ASTDumpDotCtx ASTDumpDotCtx;
 
 struct ASTDumpTextCtx {
     u32 indent;
+    FileWriter* w;
+};
+
+struct ASTDumpDotCtx {
+    FileWriter* w;
 };
 
 static inline void ast_simple_visitor_pre_fn(ASTNode* parent, ASTNode* node, void* data) {
     (void)parent;
 
     ASTDumpTextCtx* ctx = (ASTDumpTextCtx*)data;
+    assert(ctx != NULL && ctx->w != NULL);
+
     for (u32 k = 0; k < ctx->indent; ++k) {
-        printf("  ");
+        file_writer_write_cstr(ctx->w, "  ");
     }
 
-    printf("%s [%d:%d-%d:%d]\n",
+    file_writer_write_format(ctx->w, "%s [%d:%d-%d:%d]\n",
         ast_node_kind_get_name(node->kind),
         node->loc.begin.line, node->loc.begin.column,
         node->loc.end.line, node->loc.end.column
@@ -38,59 +47,60 @@ static inline void ast_simple_visitor_post_fn(ASTNode* parent, ASTNode* node, vo
 }
 
 static inline void ast_dot_visitor_print_fn(ASTNode* parent, ASTNode* node, void* data) {
-    (void)data;
+    ASTDumpDotCtx* ctx = (ASTDumpDotCtx*)data;
+    assert(ctx != NULL && ctx->w != NULL);
 
-    printf("  n%llu [label=\"", (u64) * ((const u64*)node));
+    file_writer_write_format(ctx->w, "  n%llu [label=\"", (u64)(uptr_t)node);
 
     switch (node->kind) {
     case AST_NODE_IDENTIFIER:
-        printf(SV_FMT, SV_ARG(node->as.id.value));
+        file_writer_write_format(ctx->w, SV_FMT, SV_ARG(node->as.id.value));
         break;
     case AST_NODE_TYPEREF_BUILTIN:
-        printf("%s", token_kind_get_value(node->as.typeref_builtin.kind));
+        file_writer_write_format(ctx->w, "%s", token_kind_get_value(node->as.typeref_builtin.kind));
         break;
     case AST_NODE_TYPEREF_CUSTOM:
-        printf(SV_FMT, SV_ARG(node->as.typeref_custom.value));
+        file_writer_write_format(ctx->w, SV_FMT, SV_ARG(node->as.typeref_custom.value));
         break;
     case AST_NODE_EXPR_LITERAL:
         if (node->as.expr_literal.kind == TOKEN_LITERAL_STRING) {
-            printf("\\\""SV_FMT"\\\"", SV_ARG(node->as.expr_literal.value));
+            file_writer_write_format(ctx->w, "\\\""SV_FMT"\\\"", SV_ARG(node->as.expr_literal.value));
         }
         else if (node->as.expr_literal.kind == TOKEN_LITERAL_CHAR) {
-            printf("\\\'"SV_FMT"\\\'", SV_ARG(node->as.expr_literal.value));
+            file_writer_write_format(ctx->w, "\\\'"SV_FMT"\\\'", SV_ARG(node->as.expr_literal.value));
         }
         else {
-            printf(SV_FMT, SV_ARG(node->as.expr_literal.value));
+            file_writer_write_format(ctx->w, SV_FMT, SV_ARG(node->as.expr_literal.value));
         }
         break;
     case AST_NODE_EXPR_BINARY:
-        printf("%s", token_kind_get_value(node->as.expr_binary.op));
+        file_writer_write_format(ctx->w, "%s", token_kind_get_value(node->as.expr_binary.op));
         break;
     case AST_NODE_EXPR_PREFIX_UNARY:
-        printf("%s", token_kind_get_value(node->as.expr_prefix_unary.op));
+        file_writer_write_format(ctx->w, "%s", token_kind_get_value(node->as.expr_prefix_unary.op));
         break;
     case AST_NODE_EXPR_POSTFIX_UNARY:
-        printf("%s", token_kind_get_value(node->as.expr_postfix_unary.op));
+        file_writer_write_format(ctx->w, "%s", token_kind_get_value(node->as.expr_postfix_unary.op));
         break;
     case AST_NODE_EXPR_PLACE:
-        printf(SV_FMT, SV_ARG(node->as.expr_place.value));
+        file_writer_write_format(ctx->w, SV_FMT, SV_ARG(node->as.expr_place.value));
         break;
     default:
-        printf("%s", ast_node_kind_get_name(node->kind));
+        file_writer_write_format(ctx->w, "%s", ast_node_kind_get_name(node->kind));
         break;
     }
-    printf("\"];\n");
+    file_writer_write_format(ctx->w, "\"];\n");
 
     if (parent != NULL) {
-        printf("  n%llu -> n%llu;\n", (u64) * ((const u64*)parent), (u64) * ((const u64*)node));
+        file_writer_write_format(ctx->w, "  n%llu -> n%llu;\n", (u64)(uptr_t)parent, (u64)(uptr_t)node);
     }
 }
 
 
-void dump_ast_text(const ASTNode* ast) {
-    assert(ast != NULL);
+void dump_ast_text(FileWriter* w, const ASTNode* ast) {
+    assert(ast != NULL && w != NULL && w->is_open);
 
-    ASTDumpTextCtx ctx = { .indent = 0, };
+    ASTDumpTextCtx ctx = { .indent = 0, .w = w, };
     ASTVisitor v = {
         .data    = &ctx,
         .pre_fn  = &ast_simple_visitor_pre_fn,
@@ -100,16 +110,18 @@ void dump_ast_text(const ASTNode* ast) {
     ast_visit_with(NULL, (ASTNode*)ast, &v);
 }
 
-void dump_ast_dot(const ASTNode* ast) {
-    assert(ast != NULL);
+void dump_ast_dot(FileWriter* w, const ASTNode* ast) {
+    assert(ast != NULL && w->is_open);
+
+    ASTDumpDotCtx ctx = { .w = w, };
 
     ASTVisitor v = {
-        .data    = NULL,
+        .data    = &ctx,
         .pre_fn  = &ast_dot_visitor_print_fn,
         .post_fn = NULL,
     };
 
-    printf(
+    file_writer_write_format(w,
         "digraph {\n"
         "  ranksep = 0.35;\n"
         "  node [\n"
@@ -128,5 +140,5 @@ void dump_ast_dot(const ASTNode* ast) {
     );
 
     ast_visit_with(NULL, (ASTNode*)ast, &v);
-    printf("}\n");
+    file_writer_write_cstr(w, "}\n");
 }

@@ -7,8 +7,9 @@
 
 #include "vane/diagnostic/diagnostic.h"
 
-typedef enum BuildCommand   BuildCommand;
-typedef enum DumpFlags      DumpFlags;
+typedef enum   BuildCommand BuildCommand;
+typedef enum   EmitFlags    EmitFlags;
+typedef enum   EmitMode     EmitMode;
 typedef struct BuildOptions BuildOptions;
 
 #define BUILD_OPTIONS_DEFAULT_COLLECTION_COUNT 4
@@ -23,12 +24,20 @@ enum BuildCommand {
     BUILD_COMMAND_BUILD,
 };
 
-enum DumpFlags {
-    DUMP_FLAG_NONE     = 0,
-    DUMP_FLAG_AST_TEXT = 1 << 0,
-    DUMP_FLAG_AST_DOT  = 1 << 1,
-    DUMP_FLAG_SYMBOLS  = 1 << 2,
-    DUMP_FLAG_TYPES    = 1 << 3,
+enum EmitFlags {
+    EMIT_FLAG_NONE     = 0,
+    EMIT_FLAG_AST_TEXT = 1 << 0,
+    EMIT_FLAG_AST_DOT  = 1 << 1,
+    EMIT_FLAG_SYMBOLS  = 1 << 2,
+    EMIT_FLAG_TYPES    = 1 << 3,
+    EMIT_FLAG_CFG_TEXT = 1 << 4,
+    EMIT_FLAG_CFG_DOT  = 1 << 5,
+};
+
+enum EmitMode {
+    EMIT_OUT_CONSOLE = 0,
+    EMIT_OUT_FILE,
+    EMIT_OUT_BOTH,
 };
 
 struct BuildOptions {
@@ -47,10 +56,9 @@ struct BuildOptions {
     bool with_color;
     bool werror;
 
-    DumpFlags dump_mask;
-
-    // where to write dumps, if empty -> dump to console
-    String dump_dir;
+    EmitFlags emit_mask;
+    EmitMode  emit_out_mode;
+    String    emit_dir;
 
     BuildCommand command;
 };

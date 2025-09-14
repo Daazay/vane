@@ -226,6 +226,179 @@ String path_get_normalized(StringView path) {
     return string_builder_release(&sb);
 }
 
+static inline u64 path_root_len(StringView path) {
+    // Always detect UNC
+    if (is_path_unc(path)) {
+        u64 i = 2;
+        while (i < path.len && !is_path_sep(path.data[i])) {
+            ++i;
+        }
+        if (i >= path.len) {
+            return path.len;
+        }
+        ++i;
+        while (i < path.len && !is_path_sep(path.data[i])) {
+            ++i;
+        }
+        if (i < path.len) {
+            ++i;
+        }
+        return i;
+    }
+
+#if defined(PLATFORM_WINDOWS)
+    // Drive root: C:\ or C:/
+    if (is_path_win_drive_root(path)) {
+        if (path.len >= 3 && is_path_sep(path.data[2])) {
+            return 3;
+        }
+        return 2;
+    }
+#endif
+    // POSIX absolute root or Windows root '/'
+    if (path.len >= 1 && is_path_sep(path.data[0])) {
+        return 1;
+    }
+    return 0;
+}
+
+static inline void split_components_after_root(StringView p, u64 root_len, Vector* out) {
+    assert(out != NULL);
+
+    u64 i = root_len;
+
+    while (i < p.len) {
+        i = path_skip_separators(p, i);
+        if (i >= p.len) {
+            break;
+        }
+        u64 start = i;
+        i = path_find_next_separator(p, i);
+        StringView comp = string_view_subview(p, start, i - start);
+
+        // skip "." and collapse ".." when possible (like normalization does)
+        if (string_view_eq_sv(comp, STR_LIT("."))) {
+            continue;
+        }
+
+        if (string_view_eq_sv(comp, STR_LIT(".."))) {
+            if (out->size > 0) {
+                const StringView* last = vector_at_back(*out);
+                if (!string_view_eq_sv(*last, STR_LIT(".."))) {
+                    vector_pop_back(out);
+                    continue;
+                }
+            }
+        }
+        vector_push_back(out, &comp);
+    }
+}
+
+String path_get_relative(StringView base, StringView target) {
+    if (is_string_view_empty(base)) {
+        return path_get_absolute(target);
+    }
+    if (is_string_view_empty(target)) {
+        return STRING_EMPTY;
+    }
+
+    String abs_base   = path_get_absolute(base);
+    String abs_target = path_get_absolute(target);
+
+    StringView abs_base_sv   = string_get_view(abs_base);
+    StringView abs_target_sv = string_get_view(abs_target);
+
+    u64 broot = path_root_len(abs_base_sv);
+    u64 troot = path_root_len(abs_target_sv);
+
+    // if roots differ, cannot relativize
+#if defined(PLATFORM_WINDOWS)
+    // compare UNC/drive roots case-insensitively on Windows
+    if (broot != troot || troot == 0 || broot == 0) {
+        // additional check: try to compare drive or UNC share when both non-zero
+        bool same_root = false;
+        if (broot > 0 && troot > 0) {
+            StringView br = string_view_subview(abs_base_sv, 0, broot);
+            StringView tr = string_view_subview(abs_target_sv, 0, troot);
+            same_root = string_view_eq_sv(br, tr);
+        }
+        if (!same_root) {
+            string_destroy(&abs_base);
+            return abs_target;
+        }
+    } else {
+        // same length roots: ensure equal
+        StringView br = string_view_subview(abs_base_sv, 0, broot);
+        StringView tr = string_view_subview(abs_target_sv, 0, troot);
+        if (!string_view_eq_sv(br, tr)) {
+            string_destroy(&abs_base);
+            return abs_target;
+        }
+    }
+#else
+    // POSIX: simple byte compare of roots
+    if (broot != troot || !string_view_eq_bytes(string_view_subview(abs_base_sv, 0, broot), abs_target_sv.data, troot)) {
+        string_destroy(&abs_base);
+        return abs_target;
+    }
+#endif
+
+    // split components after root
+    Vector bcomps = vector_create(4, VECTOR_SPECS(StringView, NULL));
+    Vector tcomps = vector_create(4, VECTOR_SPECS(StringView, NULL));
+
+    split_components_after_root(abs_base_sv, broot, &bcomps);
+    split_components_after_root(abs_target_sv, troot, &tcomps);
+
+    // find common prefix length
+    u32 common = 0;
+    u32 blen = bcomps.size;
+    u32 tlen = tcomps.size;
+
+    while (common < blen && common < tlen) {
+        StringView* bc = vector_at(bcomps, common);
+        StringView* tc = vector_at(tcomps, common);
+
+        if (!string_view_eq_sv(*bc, *tc)) {
+            break;
+        }
+        ++common;
+    }
+
+    // build relative: for each remaining base component → "..", then append target remainder
+    StringBuilder sb = string_builder_create(64);
+
+    u32 up_count = blen - common;
+    for (u32 i = 0; i < up_count; ++i) {
+        if (sb.len > 0) {
+            string_builder_append_c(&sb, PATH_SEP);
+        }
+        string_builder_append_cstr(&sb, "..");
+    }
+
+    for (u32 i = common; i < tlen; ++i) {
+        StringView* tc = vector_at(tcomps, i);
+        if (sb.len > 0) {
+            string_builder_append_c(&sb, PATH_SEP);
+        }
+        string_builder_append_sv(&sb, *tc);
+    }
+
+    // same path
+    if (sb.len == 0) {
+        string_builder_append_c(&sb, '.');
+    }
+
+    String rel = string_builder_release(&sb);
+
+    vector_destroy(&bcomps);
+    vector_destroy(&tcomps);
+    string_destroy(&abs_base);
+    string_destroy(&abs_target);
+
+    return rel;
+}
+
 String path_get_cwd() {
 #if defined (PLATFORM_WINDOWS)
     u16 buf[PATH_MAX] = {0};
@@ -243,18 +416,16 @@ String path_get_cwd() {
 #endif
 }
 
-String path_join_cstr_impl(const char* path0, ...) {
-    va_list va;
-    va_start(va, path0);
+String path_join_cstr_impl(const char* paths[], u32 count) {
+    if (paths == NULL || count == 0) {
+        return STRING_EMPTY;
+    }
 
     StringBuilder sb = string_builder_create(32);
-    const char* p = path0;
     bool first = true;
 
-    while (p != NULL) {
-        StringView sv = string_view_from_cstr(p);
-        p = va_arg(va, const char*);
-
+    for (u32 i = 0; i < count; ++i) {
+        StringView sv = string_view_from_cstr(paths[i]);
         if (is_string_view_empty(sv)) {
             continue;
         }
@@ -263,27 +434,32 @@ String path_join_cstr_impl(const char* path0, ...) {
         first = false;
     }
 
-    va_end(va);
-
     string_builder_shrink_to_fit(&sb);
     return string_builder_release(&sb);
 }
 
-String path_join_sv_impl(StringView path0, ...) {
-    va_list va;
-    va_start(va, path0);
-
-    StringBuilder sb = string_builder_create(32);
-    StringView path = path0;
-    bool first = true;
-
-    while (!is_string_view_empty(path)) {
-        path_builder_append_sv_with_sep(&sb, path, !first);
-        first = false;
-        path = va_arg(va, StringView);
+String path_join_sv_impl(const StringView paths[], u32 count) {
+    if (paths == NULL || count == 0) {
+        return STRING_EMPTY;
     }
 
-    va_end(va);
+    // quick capacity guess
+    u64 cap = 0;
+    for (u32 i = 0; i < count; ++i) {
+        cap += paths[i].len + 1;
+    }
+
+    StringBuilder sb = string_builder_create(cap ? (u64)cap : 32);
+    bool first = true;
+
+    for (u32 i = 0; i < count; ++i) {
+        if (is_string_view_empty(paths[i])) {
+            continue;
+        }
+
+        path_builder_append_sv_with_sep(&sb, paths[i], !first);
+        first = false;
+    }
 
     string_builder_shrink_to_fit(&sb);
     return string_builder_release(&sb);

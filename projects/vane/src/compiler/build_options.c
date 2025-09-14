@@ -169,27 +169,43 @@ static inline bool parse_arg_seq(ArgParser* parser, StringView seq, char sep, Pr
     return false;
 }
 
-static inline bool set_dump_flag(DumpFlags* mask, StringView token) {
+static inline bool set_dump_flag(EmitFlags* mask, StringView token) {
     assert(mask != NULL);
 
-    if (string_view_eq_sv(token, STR_LIT("ast"))) {
-        SET_FLAG(*mask, DUMP_FLAG_AST_TEXT);
+    if (string_view_eq_sv(token, STR_LIT("all"))) {
+        SET_FLAG(*mask,
+            EMIT_FLAG_AST_TEXT | EMIT_FLAG_AST_DOT |
+            EMIT_FLAG_SYMBOLS  | EMIT_FLAG_TYPES   |
+            EMIT_FLAG_CFG_TEXT | EMIT_FLAG_CFG_DOT
+        );
+        return true;
+    }
+    if (string_view_eq_sv(token, STR_LIT("ast")) || string_view_eq_sv(token, STR_LIT("ast-text"))) {
+        SET_FLAG(*mask, EMIT_FLAG_AST_TEXT);
         return true;
     }
     else if (string_view_eq_sv(token, STR_LIT("ast-dot"))) {
-        SET_FLAG(*mask, DUMP_FLAG_AST_DOT);
+        SET_FLAG(*mask, EMIT_FLAG_AST_DOT);
         return true;
     }
     else if (string_view_eq_sv(token, STR_LIT("symbols"))) {
-        SET_FLAG(*mask, DUMP_FLAG_SYMBOLS);
+        SET_FLAG(*mask, EMIT_FLAG_SYMBOLS);
         return true;
     }
     else if (string_view_eq_sv(token, STR_LIT("types"))) {
-        SET_FLAG(*mask, DUMP_FLAG_TYPES);
+        SET_FLAG(*mask, EMIT_FLAG_TYPES);
+        return true;
+    }
+    else if (string_view_eq_sv(token, STR_LIT("cfg")) || string_view_eq_sv(token, STR_LIT("cfg-text"))) {
+        SET_FLAG(*mask, EMIT_FLAG_TYPES);
+        return true;
+    }
+    else if (string_view_eq_sv(token, STR_LIT("cfg-dit"))) {
+        SET_FLAG(*mask, EMIT_FLAG_TYPES);
         return true;
     }
 
-    eprintln("unknown dump item '"SV_FMT"' (valid: ast, ast-dot, symbols, types)", SV_ARG(token));
+    eprintln("unknown dump item '"SV_FMT"' (valid: ast, ast-dot, symbols, types, cfg, cfg-dot, all)", SV_ARG(token));
     return false;
 }
 
@@ -197,33 +213,61 @@ static inline bool process_dump_item(ArgParser* parser, StringView item, void* d
     assert(parser != NULL);
 
     (void)data;
-    return set_dump_flag(&parser->options->dump_mask, item);
+    return set_dump_flag(&parser->options->emit_mask, item);
 }
 
-static inline bool handle_dump(ArgParser* parser, const char* value) {
+static inline bool handle_emit(ArgParser* parser, const char* value) {
     assert(parser != NULL);
 
     if (value == NULL) {
-        eprintln("--dump requires a comma-separated value (e.g. --dump ast,types)");
+        eprintln("--emit requires a comma-separated value (e.g. --emit ast,types)");
         return false;
     }
-    return parse_arg_seq(parser, string_view_from_cstr(value), ',', &process_dump_item, &parser->options->dump_mask);
+    return parse_arg_seq(parser, string_view_from_cstr(value), ',', &process_dump_item, &parser->options->emit_mask);
 }
 
-static inline bool handle_dump_dir(ArgParser* parser, const char* value) {
+static inline bool handle_emit_out(ArgParser* parser, const char* value) {
     assert(parser != NULL);
 
     if (value == NULL) {
-        eprintln("missing value for --dump-dir (expected a directory path)");
+        eprintln("missing value for --emit-out (expected: console | file | both)");
         return false;
     }
 
     StringView v = string_view_from_cstr(value);
-    if (!is_string_empty(parser->options->dump_dir)) {
-        string_destroy(&parser->options->dump_dir);
+    if (string_view_eq_sv(v, STR_LIT("console")) || string_view_eq_sv(v, STR_LIT("stdout"))) {
+        parser->options->emit_out_mode = EMIT_OUT_CONSOLE;
+        return true;
+    }
+    if (string_view_eq_sv(v, STR_LIT("file"))) {
+        parser->options->emit_out_mode = EMIT_OUT_FILE;
+        return true;
+    }
+    if (string_view_eq_sv(v, STR_LIT("both"))) {
+        parser->options->emit_out_mode = EMIT_OUT_BOTH;
+        return true;
+    }
+    eprintln("invalid --emit-out value '"SV_FMT"' (expected: console | file | both)", SV_ARG(v));
+    return false;
+}
+
+static inline bool handle_emit_dir(ArgParser* parser, const char* value) {
+    assert(parser != NULL);
+
+    if (value == NULL) {
+        eprintln("missing value for --emit-dir (expected a directory path)");
+        return false;
+    }
+    if (!is_string_empty(parser->options->emit_dir)) {
+        string_destroy(&parser->options->emit_dir);
     }
 
-    parser->options->dump_dir = string_from_sv(v);
+    // if user wants to emit in both (file and console), he must specify if with flag (--emit-out BOTH)
+    if (parser->options->emit_out_mode == EMIT_OUT_CONSOLE) {
+        parser->options->emit_out_mode = EMIT_OUT_FILE;
+    }
+
+    parser->options->emit_dir = string_from_cstr(value);
     return true;
 }
 
@@ -348,9 +392,10 @@ static inline bool handle_project_path_arg(ArgParser* parser, const char* value)
 static OptionSpec general_options[] = {
     { "collection", 'c', true,  &handle_collection,  "Add collection(s): NAME=PATH[,NAME=PATH...].",                                          },
     { "define",     'D', true,  &handle_define,      "Add define(s): KEY=VALUE[,KEY=VALUE...].",                                              },
-    { "dump",        0,  true,  &handle_dump,        "Dump: ast, ast-dot, symbols, types ( comma-separated).",                                },
 
-    { "dump-dir",    0,  true,  &handle_dump_dir,    "Directory to write all dumps.",                                                         },
+    { "emit",        0,  true,  &handle_emit,        "What to emit (comma-separated): ast, ast-dot, symbols, types, cfg, cfg-dot, all.",      },
+    { "emit-out",    0,  true,  &handle_emit_dir,    "Where to emit: console | file | both.",                                                 },
+    { "emit-dir",    0,  true,  &handle_emit_dir,    "Directory to save dumps when --emit-out=file|both",                                     },
 
     { "verbosity",  'v', true,  &handle_verbosity,   "Set verbosity level (0=errors only, 1=warning, 2=info, 3=note, 4=debug).",              },
     { "Werror",      0,  false, &handle_werror,      "Treat warnings as errors.",                                                             },
@@ -554,9 +599,9 @@ BuildOptions build_options_create() {
     build_options.with_color = is_terminal_support_colors();
     build_options.werror = false;
 
-    build_options.dump_mask = DUMP_FLAG_NONE;
-
-    build_options.dump_dir = STRING_EMPTY;
+    build_options.emit_mask     = EMIT_FLAG_NONE;
+    build_options.emit_out_mode = EMIT_OUT_CONSOLE;
+    build_options.emit_dir      = STRING_EMPTY;
 
     build_options.command = BUILD_COMMAND_MISSING;
 
@@ -570,6 +615,7 @@ void build_options_destroy(BuildOptions* build_options) {
 
     string_destroy(&build_options->project_path);
     string_destroy(&build_options->vane_root_path);
+    string_destroy(&build_options->emit_dir);
 
     hashmap_destroy(&build_options->collections);
     hashmap_destroy(&build_options->defines);
@@ -604,7 +650,7 @@ bool build_options_parse_cli(BuildOptions* build_options, int argc, const char**
     }
 
     if (arg_parser.idx >= arg_parser.args_count) {
-        eprintln("no command provided. User 'help' to see available commands.");
+        eprintln("no command provided. Use 'help' to see available commands.");
         return false;
     }
 

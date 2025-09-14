@@ -15,6 +15,16 @@ typedef double             f64;
 
 typedef u8                 byte;
 
+#if defined(_WIN64) || defined(__x86_64__) || defined(__aarch64__) || \
+    defined(__ppc64__) || defined(__LP64__) || defined(_LP64) ||      \
+   (defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8)
+typedef u64                uptr_t;
+typedef i64                iptr_t;
+#else
+typedef u32                uptr_t;
+typedef i32                iptr_t;
+#endif
+
 #define U8_MAX  0xFFu
 #define U16_MAX 0xFFFFu
 #define U32_MAX 0xFFFFFFFFu

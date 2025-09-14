@@ -1,8 +1,10 @@
 #include "vane/utils/string_view.h"
 
 #include <string.h>
+#include <malloc.h>
 
 #include "vane/utils/hash.h"
+#include "vane/utils/string.h"
 #include "vane/utils/string_utils.h"
 
 // -- creation --
@@ -254,6 +256,81 @@ Rune string_view_rune_at(StringView sv, u64 idx, u64* byte_idx, u32* rune_len) {
     }
 
     return RUNE_EOF;
+}
+
+bool string_view_utf8_to_utf16_str(StringView sv, struct String* out) {
+    assert(out != NULL);
+
+    if (is_string_view_empty(sv)) {
+        return false;
+    }
+
+    u64 need_units = convert_utf8_to_utf16(sv.data, sv.len, NULL, 0);
+    if (need_units == (u64)UNICODE_INVALID_LEN) {
+        return false;
+    }
+
+    if (need_units > (U64_MAX - 1)) {
+        return false;
+    }
+    if (need_units + 1 > U64_MAX / sizeof(u16)) {
+        return false;
+    }
+
+    u16* wbuf = malloc((need_units + 1) * sizeof(u16));
+    assert(wbuf != NULL);
+
+    u64 got_units = convert_utf8_to_utf16(sv.data, sv.len, wbuf, need_units);
+    if (got_units != need_units && got_units == (u64)UNICODE_INVALID_LEN) {
+        free(wbuf);
+        return false;
+    }
+
+    wbuf[got_units] = 0;
+
+    out->data = (u8*)wbuf;
+    out->len = got_units;
+
+    return true;
+}
+
+bool string_view_utf16_to_utf8_str(StringView sv, struct String* out) {
+    assert(out != NULL);
+
+    if (is_string_view_empty(sv)) {
+        return false;
+    }
+
+    if ((sv.len & 1u) != 0) {
+        return false;
+    }
+
+    u64 need_bytes = convert_utf16_to_utf8((const u16*)sv.data, sv.len / sizeof(u16), NULL, 0);
+    if (need_bytes == (u64)UNICODE_INVALID_LEN) {
+        return false;
+    }
+
+    if (need_bytes > (U64_MAX - 1)) {
+        return false;
+    }
+    if (need_bytes + 1 > U64_MAX / sizeof(u16)) {
+        return false;
+    }
+
+    u8* buf = malloc(need_bytes + 1);
+    assert(buf != NULL);
+
+    u64 got_bytes = convert_utf16_to_utf8((const u16*)sv.data, sv.len / sizeof(u16), buf, need_bytes);
+    if (got_bytes != need_bytes && got_bytes == (u64)UNICODE_INVALID_LEN) {
+        free(buf);
+        return false;
+    }
+
+    buf[got_bytes] = 0;
+    out->data = buf;
+    out->len = got_bytes;
+
+    return true;
 }
 
 // -- trim --

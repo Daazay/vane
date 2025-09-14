@@ -28,15 +28,17 @@ String path_get_absolute(StringView path);
 
 String path_get_normalized(StringView path);
 
+String path_get_relative(StringView base, StringView target);
+
 String path_get_cwd();
 
-String path_join_cstr_impl(const char* path0, ...);
+String path_join_cstr_impl(const char* paths[], u32 count);
 
-#define path_join_cstr(...) path_join_cstr_impl(__VA_ARGS__, NULL)
+#define path_join_cstr(...) path_join_cstr_impl(((const char*[]){ __VA_ARGS__ }), ARR_SIZE(((const char*[]){ __VA_ARGS__ })))
 
-String path_join_sv_impl(StringView path0, ...);
+String path_join_sv_impl(const StringView paths[], u32 count);
 
-#define path_join_sv(...) path_join_sv_impl(__VA_ARGS__, STRING_VIEW_EMPTY)
+#define path_join_sv(...) path_join_sv_impl(((const StringView[]){ __VA_ARGS__ }), ARR_SIZE(((const StringView[]){ __VA_ARGS__ })))
 
 StringView path_get_dir(StringView path);
 
