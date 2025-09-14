@@ -1289,7 +1289,7 @@ ASTNode* ast_parser_parse_stmt_return(ASTParser* ast_parser) {
     ASTNode* expr = NULL;
 
     token = token_stream_peek_next(ast_parser->ts);
-    if (IS_FLAG_SET(token->flags, TOKEN_FLAG_FIRST_IN_LINE) && token->kind != TOKEN_SEMICOLON) {
+    if (!IS_FLAG_SET(token->flags, TOKEN_FLAG_FIRST_IN_LINE) && token->kind != TOKEN_SEMICOLON) {
         expr = ast_parser_parse_expr(ast_parser);
         loc.end = expr->loc.end;
 

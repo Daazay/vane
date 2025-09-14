@@ -30,6 +30,8 @@ enum ScopeKind {
     SCOPE_SOURCE_FILE,
     SCOPE_FUNCTION,
     SCOPE_BASIC,
+    SCOPE_BRANCH,
+    SCOPE_LOOP,
 };
 
 

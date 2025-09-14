@@ -12,7 +12,192 @@
 
 #include "vane/sema/scope.h"
 
-#include "vane/diagnostic/diagnostic_tags.h"
+typedef enum CompilerPipelineStage CompilerPipelineStage;
+
+enum CompilerPipelineStage {
+    COMPILER_PIPE_PARSE_AST = 0,
+    COMPILER_PIPE_RESOLVE_IMPORTS,
+    COMPILER_PIPE_RESOLVE_SYMBOLS,
+    COMPILER_PIPE_BIND_SYMBOLS,
+    COMPILER_PIPE_RESOLVE_TYPES,
+    COMPILER_PIPE_BUILD_CFGS,
+    COMPILER_PIPE_BUILD,
+};
+
+static inline bool compiler_should_halt(const Compiler* compiler) {
+    // If any error
+    if (compiler->rc.sev_count[DIAG_SEV_ERROR] > 0) {
+        return true;
+    }
+    // If any warning and we treat em like errors
+    if (compiler->build_options->werror && compiler->rc.sev_count[DIAG_SEV_WARNING] > 0) {
+        return true;
+    }
+    return false;
+}
+
+static inline void compiler_dump_requested(const Compiler* compiler) {
+    assert(compiler != NULL && compiler->build_options != NULL);
+
+    if (IS_FLAG_SET(compiler->build_options->dump_mask, DUMP_FLAG_AST_TEXT)) {
+        //compiler_dump_ast(compiler);
+    }
+    if (IS_FLAG_SET(compiler->build_options->dump_mask, DUMP_FLAG_AST_DOT)) {
+        compiler_dump_ast_dot(compiler);
+    }
+    if (IS_FLAG_SET(compiler->build_options->dump_mask, DUMP_FLAG_SYMBOLS)) {
+        compiler_dump_symbols(compiler);
+    }
+    if (IS_FLAG_SET(compiler->build_options->dump_mask, DUMP_FLAG_TYPES)) {
+        compiler_dump_types(compiler);
+    }
+}
+
+static inline StringView compiler_resolve_vane_root(Compiler* compiler) {
+    assert(compiler != NULL && compiler->build_options != NULL);
+
+    // CLI override: --collection vane_root=<path>
+    {
+        StringView key = STR_LIT("vane_root");
+        StringView sv = compiler_get_collection_path(compiler, key);
+
+        if (!is_string_view_empty(sv)) {
+            compiler->build_options->vane_root_path = path_get_absolute(sv);
+            return string_get_view(compiler->build_options->vane_root_path);
+        }
+    }
+
+    // environment: VANE_ROOT
+    {
+        String env = env_get_var(STR_LIT("VANE_ROOT"));
+        if (!is_string_empty(env)) {
+            compiler->build_options->vane_root_path = env;
+            return string_get_view(compiler->build_options->vane_root_path);
+        }
+    }
+
+    return STRING_VIEW_EMPTY;
+}
+
+static inline DirListStatus compiler_get_entries_in_dir(Vector* entries, StringView path, ReportCollector* rc) {
+    assert(entries != NULL);
+    DirListStatus status = directory_list(path, entries, false);
+    switch (status) {
+    case DIR_LIST_OK: break;
+    case DIR_LIST_ERR_INVALID_PATH:  REPORT_ERROR(rc, DIAG_DRIVER_FS, "invalid path: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_NOT_FOUND:     REPORT_ERROR(rc, DIAG_DRIVER_FS, "path not found: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_ACCESS_DENIED: REPORT_ERROR(rc, DIAG_DRIVER_FS, "access denied for path: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_NOT_DIR:       REPORT_ERROR(rc, DIAG_DRIVER_FS, "path is not a directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_OPEN:          REPORT_ERROR(rc, DIAG_DRIVER_FS, "failed to open directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_READ:          REPORT_ERROR(rc, DIAG_DRIVER_FS, "failed to read directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    case DIR_LIST_ERR_STAT:          REPORT_ERROR(rc, DIAG_DRIVER_FS, "failed to stat directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    default: break;
+    }
+
+    return status;
+}
+
+static inline Package* compiler_find_subpackage_named(const Package* parent, StringView name) {
+    if (parent == NULL) {
+        return NULL;
+    }
+
+    for (u32 i = 0; i < parent->subpackages.size; ++i) {
+        Package* p = vector_at(parent->subpackages, i);
+        StringView base = path_get_basename(p->path);
+        if (string_view_eq_sv(base, name)) {
+            return p;
+        }
+    }
+
+    return NULL;
+}
+
+static inline void compiler_setup_prelude_scope(Compiler* compiler, Package* core) {
+    assert(compiler != NULL);
+    assert(compiler->global_scope != NULL);
+
+    if (compiler->prelude_scope != NULL) {
+        return;
+    }
+
+    Scope* chain_tail = compiler->global_scope;
+
+    if (core != NULL) {
+        Package* base = compiler_find_subpackage_named(core, STR_LIT("base"));
+        Package* builtin = compiler_find_subpackage_named(base, STR_LIT("builtin"));
+
+        // create builtin package scope chain first so prelude can parent it
+        if (builtin != NULL) {
+            if (!package_resolve_symbol_decls(builtin, compiler->global_scope)) {
+                REPORT_ERROR(&compiler->rc, DIAG_SEMA_SYMBOLS, "failed to create core builtin scope.");
+            }
+            else {
+                chain_tail = builtin->scope;
+            }
+        }
+    }
+
+    compiler->prelude_scope = scope_create(SCOPE_PRELUDE, chain_tail, NULL);
+    REPORT_DEBUG(&compiler->rc, DIAG_SEMA_SYMBOLS, "created prelude scope.");
+}
+
+static inline bool compiler_populate_global_builtins(Compiler* compiler) {
+    assert(compiler != NULL);
+    assert(compiler->global_scope != NULL);
+
+#define ADD_BUILTIN(NAME, KIND) do { \
+    Symbol* symbol = symbol_create(SYMBOL_TYPEALIAS, STR_LIT(NAME), NULL); \
+    symbol->as.typed.type = &compiler->ts.builtin_types[(KIND)]; \
+    symbol->as.typed.type_state = TYPE_STATE_RESOLVED; \
+    scope_add_symbol(compiler->global_scope, symbol); \
+} while (false)
+
+    ADD_BUILTIN("void", TYPE_BUILTIN_VOID);
+    ADD_BUILTIN("bool", TYPE_BUILTIN_BOOL);
+    ADD_BUILTIN("any", TYPE_BUILTIN_ANY);
+
+    ADD_BUILTIN("u8", TYPE_BUILTIN_U8);
+    ADD_BUILTIN("i8", TYPE_BUILTIN_I8);
+    ADD_BUILTIN("u16", TYPE_BUILTIN_U16);
+    ADD_BUILTIN("i16", TYPE_BUILTIN_I16);
+    ADD_BUILTIN("u32", TYPE_BUILTIN_U32);
+    ADD_BUILTIN("i32", TYPE_BUILTIN_I32);
+    ADD_BUILTIN("u64", TYPE_BUILTIN_U64);
+    ADD_BUILTIN("i64", TYPE_BUILTIN_I64);
+
+#undef ADD_BUILTIN
+
+    REPORT_DEBUG(&compiler->rc, DIAG_SEMA_TYPES, "populated global builtins.");
+    return true;
+}
+static inline bool compiler_run_upto(Compiler* compiler, CompilerPipelineStage stage) {
+    assert(compiler != NULL);
+
+    Package* core = compiler_load_core_collection(compiler);
+
+    if (!compiler_parse_source_files(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_PARSE_AST) return !compiler_should_halt(compiler);
+
+    if (!compiler_resolve_imports(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_IMPORTS) return !compiler_should_halt(compiler);
+
+    compiler_setup_prelude_scope(compiler, core);
+
+    if (!compiler_resolve_symbol_decls(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_SYMBOLS) return !compiler_should_halt(compiler);
+
+    if (!compiler_bind_symbols(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_BIND_SYMBOLS) return !compiler_should_halt(compiler);
+
+    if (!compiler_resolve_types(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_TYPES) return !compiler_should_halt(compiler);
+
+    if (!compiler_build_cfgs(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_BUILD_CFGS) return !compiler_should_halt(compiler);
+
+    return !compiler_should_halt(compiler);
+}
 
 Compiler compiler_create(BuildOptions* build_options) {
     assert(build_options != NULL);
@@ -60,86 +245,8 @@ void compiler_destroy(Compiler* compiler) {
     report_collector_destroy(&compiler->rc);
 }
 
-static inline bool compiler_should_halt(const Compiler* compiler) {
-    // If any error
-    if (compiler->rc.sev_count[DIAG_SEV_ERROR] > 0) {
-        return true;
-    }
-    // If any warning and we treat em like errors
-    if (compiler->build_options->werror && compiler->rc.sev_count[DIAG_SEV_WARNING] > 0) {
-        return true;
-    }
-    return false;
-}
-
-typedef enum CompilerPipelineStage CompilerPipelineStage;
-
-enum CompilerPipelineStage {
-    COMPILER_PIPE_PARSE_AST,
-    COMPILER_PIPE_RESOLVE_IMPORTS,
-    COMPILER_PIPE_RESOLVE_SYMBOLS,
-    COMPILER_PIPE_BIND_SYMBOLS,
-    COMPILER_PIPE_RESOLVE_TYPES,
-};
-
-static Package* compiler_find_subpackage_named(const Package* parent, StringView name) {
-    if (parent == NULL)  {
-        return NULL;
-    }
-    for (u32 i = 0; i < parent->subpackages.size; ++i) {
-        Package* p = vector_at(parent->subpackages, i);
-        StringView basename = path_get_basename(p->path);
-        if (string_view_eq_sv(basename, name)) {
-            return p;
-        }
-    }
-    return NULL;
-}
-
-static inline bool compiler_run_upto(Compiler* compiler, CompilerPipelineStage stage) {
-    assert(compiler != NULL);
-
-    Package* core_package = compiler_load_core_collection(compiler);
-
-    if (!compiler_parse_source_files(compiler)) return false;
-    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_PARSE_AST) return !compiler_should_halt(compiler);
-
-    if (!compiler_resolve_imports(compiler)) return false;
-    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_IMPORTS) return !compiler_should_halt(compiler);
-
-    // Build prelude scope from base core package
-    if (core_package != NULL) {
-        Scope* chain_tail = compiler->global_scope;
-
-        Package* base_package = compiler_find_subpackage_named(core_package,    STR_LIT("base"));
-        Package* builtin_package = compiler_find_subpackage_named(base_package, STR_LIT("builtin"));
-
-        // Resolve symbol declaration first in core packages
-        if (builtin_package != NULL) {
-            package_resolve_symbol_decls(builtin_package, compiler->global_scope);
-            chain_tail = builtin_package->scope;
-        }
-
-        compiler->prelude_scope = scope_create(SCOPE_PRELUDE, chain_tail, NULL);
-    }
-    else {
-        compiler->prelude_scope = scope_create(SCOPE_PRELUDE, compiler->global_scope, NULL);
-    }
-
-    if (!compiler_resolve_symbol_decls(compiler)) return false;
-    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_SYMBOLS) return !compiler_should_halt(compiler);
-
-    if (!compiler_bind_symbols(compiler)) return false;
-    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_BIND_SYMBOLS) return !compiler_should_halt(compiler);
-
-    if (!compiler_resolve_types(compiler)) return false;
-    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_TYPES) return !compiler_should_halt(compiler);
-
-    return !compiler_should_halt(compiler);
-}
-
 bool compiler_run_command(Compiler* compiler) {
-    assert(compiler != NULL);
+    assert(compiler != NULL && compiler->build_options != NULL);
 
     if (compiler->build_options->command == BUILD_COMMAND_HELP) {
         print_usage("vane");
@@ -151,7 +258,7 @@ bool compiler_run_command(Compiler* compiler) {
         return false;
     }
 
-    // Load entry package
+    // Load entry package (and its tree). Even for parse/check we want discovery.
     Package* root = compiler_load_package(compiler, string_get_view(compiler->build_options->project_path), false);
     if (root == NULL) {
         REPORT_ERROR(&compiler->rc, DIAG_DRIVER_PROJECT, "failed to load project '"SV_FMT"'.", SV_ARG(compiler->build_options->project_path));
@@ -160,12 +267,20 @@ bool compiler_run_command(Compiler* compiler) {
 
     bool status = true;
     switch (compiler->build_options->command) {
-    case BUILD_COMMAND_PARSE_AST:
+    case BUILD_COMMAND_PARSE:
         status = compiler_run_upto(compiler, COMPILER_PIPE_PARSE_AST);
         break;
 
-    case BUILD_COMMAND_BUILD:
+    case BUILD_COMMAND_CHECK:
         status = compiler_run_upto(compiler, COMPILER_PIPE_RESOLVE_TYPES);
+        break;
+
+    case BUILD_COMMAND_CFG:
+        status = compiler_run_upto(compiler, COMPILER_PIPE_BUILD_CFGS);
+        break;
+
+    case BUILD_COMMAND_BUILD:
+        status = compiler_run_upto(compiler, COMPILER_PIPE_BUILD);
         break;
 
     default:
@@ -178,18 +293,7 @@ bool compiler_run_command(Compiler* compiler) {
         return false;
     }
 
-    if (compiler->build_options->dump_ast) {
-        compiler_dump_ast(compiler);
-    }
-    if (compiler->build_options->dump_ast_dot) {
-        compiler_dump_ast_dot(compiler);
-    }
-    if (compiler->build_options->dump_symbols) {
-        compiler_dump_symbols(compiler);
-    }
-    if (compiler->build_options->dump_types) {
-        compiler_dump_types(compiler);
-    }
+    compiler_dump_requested(compiler);
     return true;
 }
 
@@ -199,121 +303,118 @@ StringView compiler_get_collection_path(Compiler* compiler, StringView collectio
     return path != NULL ? *path : STRING_VIEW_EMPTY;
 }
 
+Package* compiler_load_core_collection(Compiler* compiler) {
+    assert(compiler != NULL);
 
-
-static inline DirListStatus compiler_get_entries_in_dir(Vector* entries, StringView path, ReportCollector* rc) {
-    DirListStatus status = directory_list(path, entries, false);
-    switch (status) {
-    case DIR_LIST_OK: break;
-    case DIR_LIST_ERR_INVALID_PATH: REPORT_ERROR(rc, DIAG_DRIVER_FS, "invalid path: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_NOT_FOUND: REPORT_ERROR(rc, DIAG_DRIVER_FS, "path not found: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_ACCESS_DENIED: REPORT_ERROR(rc, DIAG_DRIVER_FS, "access denied for path: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_NOT_DIR: REPORT_ERROR(rc, DIAG_DRIVER_FS, "path is not a directory: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_OPEN: REPORT_ERROR(rc, DIAG_DRIVER_FS, "failed to open directory: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_READ: REPORT_ERROR(rc, DIAG_DRIVER_FS, "failed to read directory: '" SV_FMT"'.", SV_ARG(path)); break;
-    case DIR_LIST_ERR_STAT: REPORT_ERROR(rc, DIAG_DRIVER_FS, "failed to stat directory: '" SV_FMT"'.", SV_ARG(path)); break;
+    StringView vane_root = compiler_resolve_vane_root(compiler);
+    if (is_string_view_empty(vane_root)) {
+        REPORT_NOTE(&compiler->rc, DIAG_DRIVER_PROJECT, "no core collection configured (use --collection vane_root=<path> or set VANE_ROOT).");
+        return NULL;
     }
 
-    return status;
+    REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "loading core collection from '"SV_FMT"'.", SV_ARG(vane_root));
+
+    Package* core = compiler_load_package(compiler, vane_root, true);
+    if (core == NULL) {
+        REPORT_ERROR(&compiler->rc, DIAG_DRIVER_PROJECT, "failed to load core collection from '"SV_FMT"'.", SV_ARG(vane_root));
+        return NULL;
+    }
+
+    core->is_core = true;
+    return core;
 }
 
 Package* compiler_load_package(Compiler* compiler, StringView dirpath, bool is_core) {
     assert(compiler != NULL);
 
     // Resolve absolute path
-    String abs_path = path_get_absolute(dirpath);
-    StringView abs_path_sv = string_get_view(abs_path);
+    String abs = path_get_absolute(dirpath);
+    StringView abs_sv = string_get_view(abs);
+    StringView package_name = path_get_basename(abs_sv);
 
-    StringView package_name = path_get_basename(abs_path_sv);
+    REPORT_DEBUG(&compiler->rc, DIAG_DRIVER_FS, "discovering packages in '"SV_FMT"'.", SV_ARG(abs_sv));
 
-    REPORT_DEBUG(&compiler->rc, DIAG_DRIVER_FS, "discovering packages in '"SV_FMT"'.", SV_ARG(abs_path_sv));
-
-    // Check if this path has already been procesed
-    Package* existing_package = hashmap_get(&compiler->packages, &abs_path_sv);
-    if (existing_package != NULL) {
+    // Already loaded?
+    Package* existing = hashmap_get(&compiler->packages, &abs_sv);
+    if (existing != NULL) {
         REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "package '" SV_FMT "' is already loaded", SV_ARG(package_name));
-        string_destroy(&abs_path);
-        return existing_package;
+        string_destroy(&abs);
+        return existing;
     }
 
-    // Insert a placeholder to prevent duplicate scanning
-    hashmap_insert(&compiler->packages, &abs_path, NULL);
+    // Placeholder to prevent reentrant duplication during recursion
+    hashmap_insert(&compiler->packages, &abs, NULL);
 
     Vector entries = { 0 };
-    if (compiler_get_entries_in_dir(&entries, abs_path_sv, &compiler->rc) != DIR_LIST_OK) {
+    if (compiler_get_entries_in_dir(&entries, abs_sv, &compiler->rc) != DIR_LIST_OK) {
         return NULL;
     }
 
     Package* package = NULL;
     for (u32 i = 0; i < entries.size; ++i) {
-        DirEntry* entry = vector_at(entries, i);
-        StringView basename = path_get_basename(string_get_view(entry->fullpath));
+        DirEntry* e = vector_at(entries, i);
+        StringView base = path_get_basename(string_get_view(e->fullpath));
 
-        // Skip hidden directories
-        if (entry->is_dir && string_view_has_prefix_sv(basename, STR_LIT("."))) {
+        // skip hidden directories
+        if (e->is_dir && string_view_has_prefix_sv(base, STR_LIT("."))) {
             continue;
         }
 
-        // Skip files without the expected language extension
-        if (!entry->is_dir && !string_view_has_suffix_sv(basename, STR_LIT(VANE_LANG_EXT))) {
+        // skip non-source files
+        if (!e->is_dir && !string_view_has_suffix_sv(base, STR_LIT(VANE_LANG_EXT))) {
             continue;
         }
 
-        // Process subdirectories recursively
-        if (entry->is_dir) {
-            Package* subpackage = compiler_load_package(compiler, string_get_view(entry->fullpath), is_core);
-            if (subpackage == NULL) {
-                REPORT_NOTE(&compiler->rc, DIAG_DRIVER_PROJECT, "skipping '"SV_FMT"' (no package created)", SV_ARG(basename));
+        // process subdirectories recursively
+        if (e->is_dir) {
+            Package* sub = compiler_load_package(compiler, string_get_view(e->fullpath), is_core);
+            if (sub == NULL) {
+                REPORT_NOTE(&compiler->rc, DIAG_DRIVER_PROJECT, "skipping '"SV_FMT"' (no package created)", SV_ARG(base));
                 continue;
             }
 
-            // Lazily create package for this directory if needed
+            // lazily create package for this directory if needed
             if (package == NULL) {
-                package = package_create(abs_path_sv);
+                package = package_create(abs_sv, compiler);
             }
 
-            vector_push_back(&package->subpackages, &subpackage);
-            subpackage->parent_package = package;
+            package_add_subpackage(package, sub);
 
-            REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "subpackage '" SV_FMT "' added to package '" SV_FMT "'", SV_ARG(basename), SV_ARG(package_name));
+            REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "subpackage '" SV_FMT "' added to package '" SV_FMT "'", SV_ARG(base), SV_ARG(package_name));
         }
-        // Process source files
+        // process source files
         else {
             if (package == NULL) {
-                package = package_create(abs_path_sv);
+                package = package_create(abs_sv, compiler);
             }
 
-            SourceFile* source_file = source_file_create(string_get_view(entry->fullpath), &compiler->rc);
-            hashmap_insert(&compiler->source_files, &entry->fullpath, &source_file);
+            SourceFile* source_file = source_file_create(string_get_view(e->fullpath), &compiler->rc);
 
-            if (source_file != NULL) {
-                vector_push_back(&package->source_files, &source_file);
-                vector_push_back(&compiler->source_files_queue, &source_file);
+            hashmap_insert(&compiler->source_files, &e->fullpath, &source_file);
+            package_add_source_file(package, source_file);
 
-                source_file->package = package;
-                REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "added source file '" SV_FMT"'.", SV_ARG(basename));
-            }
+            vector_push_back(&compiler->source_files_queue, &source_file);
 
-            // Clear entry path since ownership transferred
-            entry->fullpath = STRING_EMPTY;
+            REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "added source file '" SV_FMT"'.", SV_ARG(base));
+
+            e->fullpath = STRING_EMPTY;
         }
     }
 
     vector_destroy(&entries);
 
     if (package != NULL) {
-        hashmap_insert(&compiler->packages, &abs_path, &package);
-        REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "registered package '" SV_FMT"'.", SV_ARG(package_name));
-
         package->is_core = is_core;
+        hashmap_insert(&compiler->packages, &abs, &package);
+        REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "registered package '" SV_FMT"'.", SV_ARG(package_name));
     }
 
     return package;
-
 }
 
 Package* compiler_resolve_import(Compiler* compiler, SourceFile* source_file, const ImportEntry* e) {
     assert(compiler != NULL && source_file != NULL && e != NULL);
+    assert(source_file->package != NULL);
 
     String import_path = STRING_EMPTY;
 
@@ -361,50 +462,6 @@ Package* compiler_resolve_import(Compiler* compiler, SourceFile* source_file, co
     Package* pkg = compiler_load_package(compiler, string_get_view(import_path), false);
     string_destroy(&import_path);
     return pkg;
-}
-
-static inline StringView compiler_resolve_vane_root(Compiler* compiler) {
-    // CLI override
-    {
-        StringView key = STR_LIT("vane_root");
-        StringView sv  = compiler_get_collection_path(compiler, key);
-        if (!is_string_view_empty(sv)) {
-            compiler->build_options->vane_root_path = path_get_absolute(sv);
-            return string_get_view(compiler->build_options->vane_root_path);
-        }
-    }
-
-    // Environment: VANE_ROOT
-    {
-        String env = env_get_var(STR_LIT("VANE_ROOT"));
-        if (!is_string_empty(env)) {
-            compiler->build_options->vane_root_path = env;
-            return string_get_view(compiler->build_options->vane_root_path);
-        }
-    }
-
-    return STRING_VIEW_EMPTY;
-}
-
-Package* compiler_load_core_collection(Compiler* compiler) {
-    assert(compiler != NULL);
-
-    StringView vane_root_path = compiler_resolve_vane_root(compiler);
-    if (is_string_view_empty(vane_root_path)) {
-        REPORT_NOTE(&compiler->rc, DIAG_DRIVER_PROJECT, "no core collection configured (use --collection vane_root=<path> or set VANE_ROOT).");
-        return NULL;
-    }
-
-    REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "loading core collection from '" SV_FMT "'.", SV_ARG(vane_root_path));
-
-    Package* core = compiler_load_package(compiler, vane_root_path, true);
-    if (core == NULL) {
-        REPORT_ERROR(&compiler->rc, DIAG_DRIVER_PROJECT, "failed to load core collection from '" SV_FMT "'.", SV_ARG(vane_root_path));
-        return NULL;
-    }
-
-    core->is_core = true;
-    return core;
 }
 
 void compiler_dump_ast(const Compiler* compiler) {
@@ -998,10 +1055,10 @@ static inline bool compiler_populate_global_scope_with_symbols(Compiler* compile
     // Map of public names -> compiler builtin kinds
     ADD_BUILTIN_TYPE("void", TYPE_BUILTIN_VOID);
     ADD_BUILTIN_TYPE("bool", TYPE_BUILTIN_BOOL);
-    ADD_BUILTIN_TYPE("any", TYPE_BUILTIN_ANY);
+    ADD_BUILTIN_TYPE("any",  TYPE_BUILTIN_ANY);
 
-    ADD_BUILTIN_TYPE("u8", TYPE_BUILTIN_U8);
-    ADD_BUILTIN_TYPE("i8", TYPE_BUILTIN_I8);
+    ADD_BUILTIN_TYPE("u8",  TYPE_BUILTIN_U8);
+    ADD_BUILTIN_TYPE("i8",  TYPE_BUILTIN_I8);
     ADD_BUILTIN_TYPE("u16", TYPE_BUILTIN_U16);
     ADD_BUILTIN_TYPE("i16", TYPE_BUILTIN_I16);
     ADD_BUILTIN_TYPE("u32", TYPE_BUILTIN_U32);
@@ -1049,6 +1106,26 @@ bool compiler_resolve_types(Compiler* compiler) {
             continue;
         }
         if (!scope_resolve_types(package->scope, &compiler->ts, &compiler->rc)) {
+            status = false;
+        }
+    }
+
+    return status;
+}
+
+bool compiler_build_cfgs(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    bool status = true;
+
+    HashmapIterator it = hashmap_get_it(&compiler->packages);
+    Package* package = NULL;
+
+    while (hashmap_it_next(&it, NULL, &package)) {
+        if (package == NULL) {
+            continue;
+        }
+        if (!package_build_cfg(package)) {
             status = false;
         }
     }

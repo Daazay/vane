@@ -9,6 +9,7 @@
 
 #include "vane/sema/scope.h"
 
+struct Compiler;
 typedef struct Package Package;
 
 #define PACKAGE_DEFAULT_SOURCE_FILE_COUNT 8
@@ -25,14 +26,21 @@ struct Package {
 
     Scope* scope;
     Package* parent_package;
+    struct Compiler* compiler;
 
     bool is_core;
 };
 
-Package* package_create(StringView path);
+Package* package_create(StringView path, struct Compiler* compiler);
 
 void package_destroy(Package* package);
+
+void package_add_source_file(Package* package, SourceFile* source_file);
+
+void package_add_subpackage(Package* package, Package* subpackage);
 
 bool package_resolve_symbol_decls(Package* package, Scope* global_scope);
 
 bool package_bind_symbols(Package* package);
+
+bool package_build_cfg(Package* package);

@@ -5,115 +5,294 @@
 #include <string.h>
 
 #include "vane/utils/terminal.h"
-
 #include "vane/utils/hash.h"
+#include "vane/utils/string_utils.h"
 
 #define println(msg, ...)  printf(msg "\n", ##__VA_ARGS__)
 #define eprintln(msg, ...) printf("[error]: " msg "\n", ##__VA_ARGS__)
 
-typedef struct ArgParser ArgParser;
-typedef struct OptionSpec OptionSpec;
+typedef struct ArgParser   ArgParser;
+typedef struct OptionSpec  OptionSpec;
 typedef struct CommandSpec CommandSpec;
 
 typedef bool (*OptionHandler)(ArgParser* parser, const char* value);
 typedef bool (*CommandHandler)(ArgParser* parser);
+typedef bool (*CommandArgsHandler)(ArgParser* parser, const char* value);
+
+typedef bool (*ProcessArgFromSeqFn)(ArgParser* parser, StringView item, void* data);
 
 struct OptionSpec {
     const char* long_name;
-    const char  short_name;
-    bool requires_value;
+    const char    short_name;     // '\0' if nones
+    bool          requires_value;
     OptionHandler handler;
     const char* help;
 };
 
 struct CommandSpec {
     const char* name;
-    BuildCommand command;
-    CommandHandler handler;
+    BuildCommand       command;
+    CommandArgsHandler arg_handler;   // called for each positional arg
 
-    OptionSpec* options;
-    u32 options_count;
+    OptionSpec* options;       // command-specific options
+    u32                options_count;
 
+    const char* arg_usage;
     const char* help;
 };
 
 struct ArgParser {
     BuildOptions* options;
 
-    const u32 args_count;
+    const u32     args_count;
     const char** args;
 
-    u32 idx;
-    const char* current_arg;
+    u32           idx;         // current index into args
+    const char* current_arg; // shorthand to args[idx]
 };
 
 static inline bool is_option(const char* arg) {
+    assert(arg != NULL);
     return arg[0] == '-';
 }
 
 static inline bool is_long_option(const char* arg) {
+    assert(arg != NULL);
     return arg[0] == '-' && arg[1] == '-';
 }
 
 static inline bool has_next_arg(const ArgParser* parser) {
+    assert(parser != NULL);
     return parser->idx + 1 < parser->args_count;
 }
 
 static inline bool is_next_option(const ArgParser* parser) {
+    assert(parser != NULL);
     return is_option(parser->args[parser->idx + 1]);
 }
 
 static inline const char* advance_arg(ArgParser* parser) {
+    assert(parser != NULL);
     return parser->args[++parser->idx];
 }
 
 static inline bool match_option(const char* arg, const OptionSpec* spec) {
+    assert(arg != NULL && spec != NULL);
+
     if (is_long_option(arg)) {
         return strcmp(arg + 2, spec->long_name) == 0;
     }
-    if ((arg[0] == '-') &&
-        (spec->short_name != '\0') &&
+    if ((arg[0] == '-') && (spec->short_name != '\0') &&
         (arg[1] == spec->short_name) && (arg[2] == '\0')) {
         return true;
     }
     return false;
 }
 
-static inline bool split_kv(const char* in, char sep, String* key, String* value) {
-    StringView sv = string_view_from_cstr(in);
-    u64 pos = string_view_find_c(sv, sep);
+static inline bool split_kv(StringView in, char sep, StringView* key, StringView* value) {
+    assert(key != NULL && value != NULL);
 
-    if (pos == (u64)NPOS || pos == 0 || pos == sv.len) {
+    if (is_string_view_empty(in)) {
         return false;
     }
 
-    *key   = string_from_sv(string_view_subview(sv, 0, pos));
-    *value = string_from_sv(string_view_subview(sv, pos + 1, sv.len - pos));
+    u64 pos = string_view_find_c(in, sep);
+    if (pos == (u64)NPOS || pos == 0 || pos + 1 >= in.len) {
+        return false;
+    }
+
+    StringView k = string_view_trim(string_view_subview(in, 0, pos));
+    StringView v = string_view_trim(string_view_subview(in, pos + 1, in.len - pos));
+
+    if (is_string_view_empty(k) || is_string_view_empty(v)) {
+        return false;
+    }
+
+    *key = k;
+    *value = v;
 
     return true;
 }
 
-//
+static inline bool parse_arg_seq(ArgParser* parser, StringView seq, char sep, ProcessArgFromSeqFn process_fn, void* data) {
+    assert(parser != NULL && process_fn != NULL);
+
+    if (is_string_view_empty(seq)) {
+        eprintln("invalid sequence: empty");
+        return false;
+    }
+
+    u64 start = 0;
+
+    while (start < seq.len) {
+        u64 pos = string_view_find_c_with_offset(seq, start, sep);
+        u64 end = (pos == (u64)NPOS) ? seq.len : pos;
+
+        if (end == start) {
+            if (start == 0) {
+                eprintln("invalid sequence: empty leading item");
+            }
+            else if (end == seq.len) {
+                eprintln("invalid sequence: empty trailing item");
+            }
+            else {
+                eprintln("invalid sequence: empty item (consecutive separators)");
+            }
+            return false;
+        }
+
+        StringView item = string_view_trim(string_view_subview(seq, start, end - start));
+        if (is_string_view_empty(item)) {
+            eprintln("invalid sequence: empty item");
+            return false;
+        }
+
+        if (!process_fn(parser, item, data)) {
+            return false;
+        }
+
+        // final segment processed
+        if (pos == (u64)NPOS) {
+            return true;
+        }
+
+        start = pos + 1;
+
+        // trailing sep -> empty trailing item
+        if (start == seq.len) {
+            eprintln("invalid sequence: empty trailing item");
+            return false;
+        }
+    }
+
+    unreachable();
+    return false;
+}
+
+static inline bool set_dump_flag(DumpFlags* mask, StringView token) {
+    assert(mask != NULL);
+
+    if (string_view_eq_sv(token, STR_LIT("ast"))) {
+        SET_FLAG(*mask, DUMP_FLAG_AST_TEXT);
+        return true;
+    }
+    else if (string_view_eq_sv(token, STR_LIT("ast-dot"))) {
+        SET_FLAG(*mask, DUMP_FLAG_AST_DOT);
+        return true;
+    }
+    else if (string_view_eq_sv(token, STR_LIT("symbols"))) {
+        SET_FLAG(*mask, DUMP_FLAG_SYMBOLS);
+        return true;
+    }
+    else if (string_view_eq_sv(token, STR_LIT("types"))) {
+        SET_FLAG(*mask, DUMP_FLAG_TYPES);
+        return true;
+    }
+
+    eprintln("unknown dump item '"SV_FMT"' (valid: ast, ast-dot, symbols, types)", SV_ARG(token));
+    return false;
+}
+
+static inline bool process_dump_item(ArgParser* parser, StringView item, void* data) {
+    assert(parser != NULL);
+
+    (void)data;
+    return set_dump_flag(&parser->options->dump_mask, item);
+}
+
+static inline bool handle_dump(ArgParser* parser, const char* value) {
+    assert(parser != NULL);
+
+    if (value == NULL) {
+        eprintln("--dump requires a comma-separated value (e.g. --dump ast,types)");
+        return false;
+    }
+    return parse_arg_seq(parser, string_view_from_cstr(value), ',', &process_dump_item, &parser->options->dump_mask);
+}
+
+static inline bool handle_dump_dir(ArgParser* parser, const char* value) {
+    assert(parser != NULL);
+
+    if (value == NULL) {
+        eprintln("missing value for --dump-dir (expected a directory path)");
+        return false;
+    }
+
+    StringView v = string_view_from_cstr(value);
+    if (!is_string_empty(parser->options->dump_dir)) {
+        string_destroy(&parser->options->dump_dir);
+    }
+
+    parser->options->dump_dir = string_from_sv(v);
+    return true;
+}
+
+static inline bool process_collection_item(ArgParser* parser, StringView item, void* data) {
+    assert(parser != NULL);
+
+    (void)data;
+
+    StringView k = STRING_VIEW_EMPTY;
+    StringView v = STRING_VIEW_EMPTY;
+
+    if (!split_kv(item, '=', &k, &v)) {
+        eprintln("invalid --collection item '"SV_FMT"' (expected NAME=PATH)", SV_ARG(item));
+        return false;
+    }
+
+    String k_s = string_from_sv(k);
+    String v_s = string_from_sv(v);
+
+    hashmap_insert(&parser->options->collections, &k_s, &v_s);
+    return true;
+}
 
 static bool handle_collection(ArgParser* parser, const char* value) {
+    assert(parser != NULL);
+
     if (value == NULL) {
         eprintln("missing value for --collection");
         return false;
     }
 
-    String name = STRING_EMPTY;
-    String path = STRING_EMPTY;
+    StringView seq = string_view_from_cstr(value);
+    return parse_arg_seq(parser, seq, ',', &process_collection_item, NULL);
+}
 
-    if (!split_kv(value, '=', &name, &path)) {
-        eprintln("invalid format for --collection, expected NAME=PATH");
+static inline bool process_define_item(ArgParser* parser, StringView item, void* data) {
+    assert(parser != NULL);
+
+    (void)data;
+
+    StringView k = STRING_VIEW_EMPTY;
+    StringView v = STRING_VIEW_EMPTY;
+
+    if (!split_kv(item, '=', &k, &v)) {
+        eprintln("invalid --define item '"SV_FMT"' (expected KEY=VALUE)", SV_ARG(item));
         return false;
     }
 
-    hashmap_insert(&parser->options->collections, &name, &path);
+    String k_s = string_from_sv(k);
+    String v_s = string_from_sv(v);
+
+    hashmap_insert(&parser->options->defines, &k_s, &v_s);
     return true;
 }
 
+static bool handle_define(ArgParser* parser, const char* value) {
+    assert(parser != NULL);
+
+    if (value == NULL) {
+        eprintln("missing value for --define");
+        return false;
+    }
+
+    return parse_arg_seq(parser, string_view_from_cstr(value), ',', &process_define_item, NULL);
+}
+
 static bool handle_verbosity(ArgParser* parser, const char* value) {
+    assert(parser != NULL);
+
     if (value == NULL) {
         eprintln("missing value for --verbosity (expected a number)");
         return false;
@@ -131,121 +310,101 @@ static bool handle_verbosity(ArgParser* parser, const char* value) {
     return true;
 }
 
-static bool handle_define(ArgParser* parser, const char* value) {
-    if (value == NULL) {
-        eprintln("--define requires KEY=VALUE");
-        return false;
-    }
-
-    String k = STRING_EMPTY;
-    String v = STRING_EMPTY;
-
-    if (!split_kv(value, '=', &k, &v)) {
-        eprintln("invalid format for --define, expected KEY=VALUE");
-        return false;
-    }
-
-    hashmap_insert(&parser->options->defines, &k, &v);
-    return true;
-}
-
-static bool handle_help(ArgParser* parser) {
-    (void)parser;
-    return true;
-}
-
-static bool handle_build(ArgParser* parser) {
-    if (!has_next_arg(parser) || is_next_option(parser)) {
-        eprintln("no path provided for build command");
-        return false;
-    }
-
-    parser->options->project_path = string_from_cstr(advance_arg(parser));
-    return true;
-}
-
-static bool handle_parse(ArgParser* parser) {
-    if (!has_next_arg(parser) || is_next_option(parser)) {
-        eprintln("no path provided for parse command");
-        return false;
-    }
-
-    parser->options->project_path = string_from_cstr(advance_arg(parser));
-    return true;
-}
-
-static bool handle_dump_ast(ArgParser* parser, const char* value) {
-    (void)parser; (void)value;
-    parser->options->dump_ast = true;
-    return true;
-}
-
-static bool handle_dump_ast_dot(ArgParser* parser, const char* value) {
-    (void)parser; (void)value;
-    parser->options->dump_ast_dot = true;
-    return true;
-}
-
-static bool handle_dump_symbols(ArgParser* parser, const char* value) {
-    (void)parser; (void)value;
-    parser->options->dump_symbols = true;
-    return true;
-}
-
-static bool handle_dump_types(ArgParser* parser, const char* value) {
-    (void)parser; (void)value;
-    parser->options->dump_types = true;
-    return true;
-}
-
 static bool handle_werror(ArgParser* parser, const char* value) {
+    assert(parser != NULL);
+
     (void)parser; (void)value;
     parser->options->werror = true;
     return true;
 }
 
 static bool handle_no_color(ArgParser* parser, const char* value) {
+    assert(parser != NULL);
+
     (void)parser; (void)value;
     parser->options->with_color = false;
     return true;
 }
 
+static inline bool handle_project_path_arg(ArgParser* parser, const char* value) {
+    assert(parser != NULL && parser->current_arg != NULL);
+
+    // expect and arg
+    if (value == NULL) {
+        eprintln("missing required argument: <path>");
+        return false;
+    }
+
+    StringView existing_sv = string_get_view(parser->options->project_path);
+    if (!is_string_view_empty(existing_sv)) {
+        eprintln("duplicate project path '%s' (path already set to '"SV_FMT"')", value, SV_ARG(existing_sv));
+        return false;
+    }
+
+    parser->options->project_path = string_from_cstr(value);
+    return true;
+}
+
 static OptionSpec general_options[] = {
-    { "collection", 'c', true,  &handle_collection,     "Add collection in NAME=PATH format." },
-    { "verbosity",  'v', true,  &handle_verbosity,      "Set verbosity level (0=errors only, 1=warning, 2=info, 3=note, 4=debug)." },
-    { "define",     'D', true,  &handle_define,         "Add KEY=VALUE build definitions." },
+    { "collection", 'c', true,  &handle_collection,  "Add collection(s): NAME=PATH[,NAME=PATH...].",                                          },
+    { "define",     'D', true,  &handle_define,      "Add define(s): KEY=VALUE[,KEY=VALUE...].",                                              },
+    { "dump",        0,  true,  &handle_dump,        "Dump: ast, ast-dot, symbols, types ( comma-separated).",                                },
 
-    { "Werror",      0,  false, &handle_werror,        "Treat warnings as errors." },
-    { "no-color",    0,  false, &handle_no_color,      "Turn off colors in diagnostics." },
-};
+    { "dump-dir",    0,  true,  &handle_dump_dir,    "Directory to write all dumps.",                                                         },
 
-static OptionSpec build_parse_options[] = {
-    { "dump-ast",     0, false, &handle_dump_ast,     "Dump AST for each file." },
-    { "dump-ast-dot", 0, false, &handle_dump_ast_dot, "Dump Graphviz DOT of AST for each file." },
-    { "dump-symbols", 0, false, &handle_dump_symbols, "Dump symtables." },
-    { "dump-types",   0, false, &handle_dump_types,   "Dump types." },
+    { "verbosity",  'v', true,  &handle_verbosity,   "Set verbosity level (0=errors only, 1=warning, 2=info, 3=note, 4=debug).",              },
+    { "Werror",      0,  false, &handle_werror,      "Treat warnings as errors.",                                                             },
+    { "no-color",    0,  false, &handle_no_color,    "Disable colors in diagnostics.",                                                        },
 };
 
 static CommandSpec commands[] = {
-    { "help",  BUILD_COMMAND_HELP,      &handle_help,  NULL, 0,
-      "Show help message" },
-    { "parse", BUILD_COMMAND_PARSE_AST, &handle_parse, build_parse_options, ARR_SIZE(build_parse_options),
-      "Parse files to ast" },
-    { "build", BUILD_COMMAND_BUILD,     &handle_build, build_parse_options, ARR_SIZE(build_parse_options),
-      "Build a project" },
+    { "help",  BUILD_COMMAND_HELP,  NULL,                     NULL, 0, NULL,     "Show help message",                 },
+    { "parse", BUILD_COMMAND_PARSE, &handle_project_path_arg, NULL, 0, "<path>", "Parse files to AST",                },
+    { "check", BUILD_COMMAND_CHECK, &handle_project_path_arg, NULL, 0, "<path>", "Build symtables and resolve types", },
+    { "cfg",   BUILD_COMMAND_CFG,   &handle_project_path_arg, NULL, 0, "<path>", "Build CFG for each function",       },
+    { "build", BUILD_COMMAND_BUILD, &handle_project_path_arg, NULL, 0, "<path>", "Run full build pipeline",           },
 };
 
-static bool parse_option(ArgParser* parser, OptionSpec* table, u32 count) {
-    const char* arg = parser->current_arg;
+static inline bool parse_one_general_option(ArgParser* parser) {
+    assert(parser != NULL && parser->current_arg != NULL);
 
-    for (u32 i = 0; i < count; ++i) {
-        OptionSpec* spec = &table[i];
+    for (u32 i = 0; i < ARR_SIZE(general_options); ++i) {
+        OptionSpec* spec = &general_options[i];
 
-        if (match_option(arg, spec)) {
+        if (!match_option(parser->current_arg, spec)) {
+            continue;
+        }
+
+        const char* value = NULL;
+        if (spec->requires_value) {
+            if (!has_next_arg(parser) || is_next_option(parser)) {
+                eprintln("option '%s' requires a value.", parser->current_arg);
+                return false;
+            }
+            value = advance_arg(parser);
+        }
+        return spec->handler(parser, value);
+    }
+
+    eprintln("unknown general option '%s'.", parser->current_arg);
+    return false;
+}
+
+static bool parse_one_option(ArgParser* parser, OptionSpec* table, u32 count, bool include_general) {
+    assert(parser != NULL && parser->current_arg != NULL);
+
+    if (include_general) {
+        for (u32 i = 0; i < ARR_SIZE(general_options); ++i) {
+            OptionSpec* spec = &general_options[i];
+
+            if (!match_option(parser->current_arg, spec)) {
+                continue;
+            }
+
             const char* value = NULL;
             if (spec->requires_value) {
                 if (!has_next_arg(parser) || is_next_option(parser)) {
-                    eprintln("option '%s' requires a value.", arg);
+                    eprintln("option '%s' requires a value.", parser->current_arg);
                     return false;
                 }
                 value = advance_arg(parser);
@@ -254,70 +413,122 @@ static bool parse_option(ArgParser* parser, OptionSpec* table, u32 count) {
         }
     }
 
-    eprintln("unknown option '%s'.", arg);
+    for (u32 i = 0; i < count; ++i) {
+        OptionSpec* spec = &table[i];
+
+        if (!match_option(parser->current_arg, spec)) {
+            continue;
+        }
+
+        const char* value = NULL;
+        if (spec->requires_value) {
+            if (!has_next_arg(parser) || is_next_option(parser)) {
+                eprintln("option '%s' requires a value.", parser->current_arg);
+                return false;
+            }
+            value = advance_arg(parser);
+        }
+        return spec->handler(parser, value);
+    }
+
+    eprintln("unknown option '%s'.", parser->current_arg);
     return false;
 }
 
 static bool parse_command(ArgParser* parser) {
-    const char* arg = parser->current_arg;
+    assert(parser != NULL && parser->current_arg != NULL);
 
     for (u32 i = 0; i < ARR_SIZE(commands); ++i) {
         CommandSpec* cmd = &commands[i];
 
-        if (strcmp(arg, cmd->name) == 0) {
-            parser->options->command = cmd->command;
+        if (strcmp(parser->current_arg, cmd->name) != 0) {
+            continue;
+        }
 
-            if (cmd->handler != NULL && !cmd->handler(parser)) {
+        parser->options->command = cmd->command;
+        bool saw_positional = false;
+
+        // position args (must come before any options)
+        while (has_next_arg(parser) && !is_next_option(parser)) {
+            parser->current_arg = advance_arg(parser);
+
+            if (cmd->arg_handler == NULL) {
+                eprintln("unexpected argument '%s' for command '%s'", parser->current_arg, cmd->name);
                 return false;
             }
 
-            while (has_next_arg(parser)) {
-                const char* lookahead = parser->args[parser->idx + 1];
-                if (!is_option(lookahead)) {
-                    break;
-                }
-
-                parser->current_arg = advance_arg(parser);
-                if (!parse_option(parser, cmd->options, cmd->options_count)) {
-                    return false;
-                }
+            saw_positional = true;
+            if (!cmd->arg_handler(parser, parser->current_arg)) {
+                return false;
             }
-            return true;
         }
+
+        // If the command expects positionals but none were given, let the handler report.
+        if (cmd->arg_handler != NULL && !saw_positional) {
+            if (!cmd->arg_handler(parser, NULL)) {
+                return false;
+            }
+        }
+
+        // Options (command specific + general)
+        while (has_next_arg(parser) && is_next_option(parser)) {
+            parser->current_arg = advance_arg(parser);
+            if (!parse_one_option(parser, cmd->options, cmd->options_count, true)) {
+                return false;
+            }
+        }
+
+        // After options, no more arguments are allowed
+        if (has_next_arg(parser) && !is_next_option(parser)) {
+            eprintln("arguments must precede options for command '%s'", cmd->name);
+            return false;
+        }
+
+        return true;
     }
 
-    eprintln("unknown command '%s'.", arg);
+    eprintln("unknown command '%s'.", parser->current_arg);
     return false;
 }
 
 void print_usage(const char* argv0) {
-    println("Usage: %s [GENERAL OPTIONS] <COMMAND> [ARGS] [COMMAND OPTIONS]", argv0);
+    if (argv0 == NULL) {
+        argv0 = "vane";
+    }
+
+    println("Usage: %s [general options] <command> [args] [options]", argv0);
     println("");
 
-    println("General options:");
+    println("General options (may appear before or after the command):");
     for (u32 i = 0; i < ARR_SIZE(general_options); ++i) {
         const OptionSpec* op = &general_options[i];
         if (op->short_name != '\0') {
             println("    -%c, --%-14s %s", op->short_name, op->long_name, op->help);
         }
         else {
-            println("    --%-18s %s", op->long_name, op->help);
+            println("        --%-14s %s", op->long_name, op->help);
         }
     }
-
     println("");
+
     println("Commands:");
     for (u32 i = 0; i < ARR_SIZE(commands); ++i) {
         const CommandSpec* cmd = &commands[i];
-        println("  %-22s %s", cmd->name, cmd->help);
+        const char* arg_usage = (cmd->arg_usage != NULL)
+            ? cmd->arg_usage
+            : "";
 
+        // columns: name (10), args (12), help (rest)
+        println("  %-5s %-12s %s", cmd->name, arg_usage, cmd->help);
+
+        // list command-specific options (if any)
         for (u32 j = 0; j < cmd->options_count; ++j) {
             const OptionSpec* op = &cmd->options[j];
             if (op->short_name != '\0') {
-                println("    -%c, --%-14s %s", op->short_name, op->long_name, op->help);
+                println("    -%c, --%-12s %s", op->short_name, op->long_name, op->help);
             }
             else {
-                println("    --%-18s %s", op->long_name, op->help);
+                println("        --%-12s %s", op->long_name, op->help);
             }
         }
     }
@@ -326,7 +537,7 @@ void print_usage(const char* argv0) {
 BuildOptions build_options_create() {
     BuildOptions build_options = { 0 };
 
-    build_options.project_path   = STRING_EMPTY;
+    build_options.project_path = STRING_EMPTY;
     build_options.vane_root_path = STRING_EMPTY;
 
     build_options.collections = hashmap_create(BUILD_OPTIONS_DEFAULT_COLLECTION_COUNT,
@@ -343,10 +554,9 @@ BuildOptions build_options_create() {
     build_options.with_color = is_terminal_support_colors();
     build_options.werror = false;
 
-    build_options.dump_ast     = false;
-    build_options.dump_ast_dot = false;
-    build_options.dump_symbols = false;
-    build_options.dump_types   = false;
+    build_options.dump_mask = DUMP_FLAG_NONE;
+
+    build_options.dump_dir = STRING_EMPTY;
 
     build_options.command = BUILD_COMMAND_MISSING;
 
@@ -365,7 +575,7 @@ void build_options_destroy(BuildOptions* build_options) {
     hashmap_destroy(&build_options->defines);
 }
 
-bool build_options_parse_args(BuildOptions* build_options, int argc, const char** argv) {
+bool build_options_parse_cli(BuildOptions* build_options, int argc, const char** argv) {
     assert(build_options != NULL);
 
     if (argc < 2) {
@@ -381,28 +591,31 @@ bool build_options_parse_args(BuildOptions* build_options, int argc, const char*
         .current_arg = NULL,
     };
 
+    // parse general option before the command
     for (; arg_parser.idx < arg_parser.args_count; ++arg_parser.idx) {
         arg_parser.current_arg = arg_parser.args[arg_parser.idx];
 
-        if (is_option(arg_parser.current_arg)) {
-            if (!parse_option(&arg_parser, general_options, ARR_SIZE(general_options))) {
-                return false;
-            }
+        if (!is_option(arg_parser.current_arg)) {
+            break;
         }
-        else if (build_options->command == BUILD_COMMAND_MISSING) {
-            if (!parse_command(&arg_parser)) {
-                return false;
-            }
-            continue;
-        }
-        else {
-            eprintln("Unexpected argument '%s'.", arg_parser.current_arg);
+        if (!parse_one_general_option(&arg_parser)) {
             return false;
         }
     }
 
-    if (build_options->command == BUILD_COMMAND_MISSING) {
-        eprintln("no command provided. Use 'help' to see available commands.");
+    if (arg_parser.idx >= arg_parser.args_count) {
+        eprintln("no command provided. User 'help' to see available commands.");
+        return false;
+    }
+
+    arg_parser.current_arg = arg_parser.args[arg_parser.idx];
+    if (!parse_command(&arg_parser)) {
+        return false;
+    }
+
+    // no trailing garbage
+    if (arg_parser.idx + 1 < arg_parser.args_count) {
+        eprintln("unexpected argument '%s'", arg_parser.args[arg_parser.idx + 1]);
         return false;
     }
 

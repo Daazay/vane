@@ -11,7 +11,7 @@ struct ASTDotVisitorCtx {
 void ast_dot_visitor_print_fn(ASTNode* parent, ASTNode* node, void* data) {
     ASTDotVisitorCtx* ctx = data;
 
-    fprintf(ctx->out, "  n%llu [label=\"", (u64)node);
+    fprintf(ctx->out, "  n%llu [label=\"", (u64)*((const u64*)node));
 
     switch (node->kind) {
     case AST_NODE_IDENTIFIER:
@@ -53,7 +53,7 @@ void ast_dot_visitor_print_fn(ASTNode* parent, ASTNode* node, void* data) {
     fprintf(ctx->out, "\"];\n");
 
     if (parent != NULL) {
-        fprintf(ctx->out, "  n%llu -> n%llu;\n", (u64)parent, (u64)node);
+        fprintf(ctx->out, "  n%llu -> n%llu;\n",  (u64)*((const u64*)parent), (u64)*((const u64*)node));
     }
 }
 

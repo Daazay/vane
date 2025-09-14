@@ -10,7 +10,7 @@
 
 int main(int argc, const char** argv) {
     BuildOptions build_options = build_options_create();
-    if (!build_options_parse_args(&build_options, argc, argv)) {
+    if (!build_options_parse_cli(&build_options, argc, argv)) {
         build_options_destroy(&build_options);
         return EXIT_FAILURE;
     }

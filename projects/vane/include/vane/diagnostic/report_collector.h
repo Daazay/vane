@@ -4,6 +4,8 @@
 #include "vane/utils/vector.h"
 #include "vane/diagnostic/report.h"
 
+#include "vane/diagnostic/diagnostic_tags.h"
+
 typedef struct ReportCollector ReportCollector;
 
 #define REPORT_COLLECTOR_DEFAULT_CAPACITY 16

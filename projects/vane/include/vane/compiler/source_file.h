@@ -16,13 +16,14 @@ typedef enum ImportBaseKind ImportBaseKind;
 typedef struct SourceFile SourceFile;
 typedef struct ImportEntry ImportEntry;
 
-#define SOURCE_FILE_DEFAULT_ENTITIES_COUNT 8
-#define SOURCE_FILE_DEFAULT_IMPORT_COUNT   2
+#define SOURCE_FILE_DEFAULT_ENTITIES_COUNT  8
+#define SOURCE_FILE_DEFAULT_IMPORT_COUNT    2
+#define SOURCE_FILE_DEFAULT_CFG_BY_FUN_SIZE 4
 
 enum ImportBaseKind {
-    IMPORT_BASE_RELATIVE = 9, // "package_path"                 -> from current package (default)
-    IMPORT_BASE_PROJECT_ROOT, // ":package_path"                -> from project root
-    IMPORT_BASE_COLLECTION,   // "collection_name:package_path" -> from collection
+    IMPORT_BASE_RELATIVE     = 0, // "package_path"                 -> from current package (default)
+    IMPORT_BASE_PROJECT_ROOT = 1, // ":package_path"                -> from project root
+    IMPORT_BASE_COLLECTION   = 2, // "collection_name:package_path" -> from collection
 };
 
 struct ImportEntry {
@@ -47,13 +48,15 @@ struct SourceFile {
 
     // ImportEntry
     Vector imports;
+    bool imports_resolved;
 
     Scope* scope;
     struct Package* package;
 
-    ReportCollector* rc;
+    Hashmap cfg_by_fun;
+    bool cfg_built;
 
-    bool imports_resolved;
+    ReportCollector* rc;
 };
 
 SourceFile* source_file_create(StringView path, ReportCollector* rc);
@@ -67,3 +70,5 @@ bool source_file_resolve_imports(SourceFile* source_file, struct Compiler* compi
 bool source_file_resolve_symbol_decls(SourceFile* source_file);
 
 bool source_file_bind_symbols(SourceFile* source_file);
+
+bool source_file_build_cfgs(SourceFile* source_file);

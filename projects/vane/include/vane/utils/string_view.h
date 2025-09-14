@@ -77,6 +77,14 @@ Rune string_view_rune_at_byte(StringView sv, u64 byte_idx, u32* rune_len);
 
 Rune string_view_rune_at(StringView sv, u64 idx, u64* byte_idx, u32* rune_len);
 
+// -- trim --
+
+StringView string_view_trim_start(StringView sv);
+
+StringView string_view_trim_end(StringView sv);
+
+StringView string_view_trim(StringView sv);
+
 // -- search --
 
 u64 string_view_find_c_with_offset(StringView sv, u64 offset, char c);

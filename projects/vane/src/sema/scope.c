@@ -37,6 +37,8 @@ const char* scope_kind_get_name(ScopeKind kind) {
     case SCOPE_SOURCE_FILE: return "source_file";
     case SCOPE_FUNCTION:    return "function";
     case SCOPE_BASIC:       return "block";
+    case SCOPE_BRANCH:      return "branch";
+    case SCOPE_LOOP:        return "loop";
     default:
         unreachable();
         return NULL;

@@ -36,3 +36,23 @@ struct HashItemSpecs {
     ItemHashFn hash_fn;
     ItemEqualsFn equals_fn;
 };
+
+static inline u32 item_ptr_hash(const void* ptr) {
+    union { const void* p; u64 u; } cvt;
+    cvt.u = 0;
+    cvt.p = ptr;
+    u64 x = cvt.u;
+
+    // splitmix64-ish mix
+    x ^= x >> 33;
+    x *= 0xff51afd7ed558ccdULL;
+    x ^= x >> 33;
+    x *= 0xc4ceb9fe1a85ec53ULL;
+    x ^= x >> 33;
+
+    return (u32)(x ^ (x >> 32));
+}
+
+static inline bool item_ptr_eq(const void* ptr1, const void* ptr2) {
+    return ptr1 == ptr2;
+}

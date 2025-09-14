@@ -62,7 +62,7 @@ Package* compiler_resolve_import(Compiler* compiler, SourceFile* source_file, co
 
 // dump functions
 
-void compiler_dump_ast(const Compiler* compiler);
+void compiler_dump_ast_text(const Compiler* compiler);
 
 void compiler_dump_ast_dot(const Compiler* compiler);
 
@@ -81,3 +81,5 @@ bool compiler_resolve_symbol_decls(Compiler* compiler);
 bool compiler_bind_symbols(Compiler* compiler);
 
 bool compiler_resolve_types(Compiler* compiler);
+
+bool compiler_build_cfgs(Compiler* compiler);

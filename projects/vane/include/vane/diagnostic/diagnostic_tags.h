@@ -20,3 +20,4 @@
 #define DIAG_SEMA_BIND    DIAG_SEMA":bind"    // name binding in expression
 #define DIAG_SEMA_IMPORTS DIAG_SEMA":imports" // alias imports, opened imports, qualified access
 #define DIAG_SEMA_TYPES   DIAG_SEMA":types"   // type names, typerefs, cyclic/type resolution
+#define DIAG_SEMA_CFG     DIAG_SEMA":cfg"     // build cfg

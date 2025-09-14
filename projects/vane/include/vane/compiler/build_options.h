@@ -7,41 +7,50 @@
 
 #include "vane/diagnostic/diagnostic.h"
 
-typedef enum BuildCommand BuildCommand;
+typedef enum BuildCommand   BuildCommand;
+typedef enum DumpFlags      DumpFlags;
 typedef struct BuildOptions BuildOptions;
 
 #define BUILD_OPTIONS_DEFAULT_COLLECTION_COUNT 4
 #define BUILD_OPTIONS_DEFAULT_DEFINE_COUNT     4
 
-enum BuildCommand{
+enum BuildCommand {
     BUILD_COMMAND_MISSING = 0,
     BUILD_COMMAND_HELP,
-    BUILD_COMMAND_PARSE_AST,
+    BUILD_COMMAND_PARSE,
+    BUILD_COMMAND_CHECK,
+    BUILD_COMMAND_CFG,
     BUILD_COMMAND_BUILD,
 };
 
-struct BuildOptions {
-    String project_path;
-    String vane_root_path;
+enum DumpFlags {
+    DUMP_FLAG_NONE     = 0,
+    DUMP_FLAG_AST_TEXT = 1 << 0,
+    DUMP_FLAG_AST_DOT  = 1 << 1,
+    DUMP_FLAG_SYMBOLS  = 1 << 2,
+    DUMP_FLAG_TYPES    = 1 << 3,
+};
 
-    // key:   [String, &string_destroy]
-    // value: [String, &string_destroy]
+struct BuildOptions {
+    String project_path;   // required for parse/check/cfg/build
+    String vane_root_path; // optional
+
+    // k: [String, &string_destroy]
+    // v: [String, &string_destroy]
     Hashmap collections;
 
-    // key:   [String, &string_destroy]
-    // value: [String, &string_destroy]
+    // k: [String, &string_destroy]
+    // v: [String, &string_destroy]
     Hashmap defines;
 
     DiagnosticSeverity log_verbosity;
     bool with_color;
-
-    // debug
-    bool dump_tokens;
-    bool dump_ast;
-    bool dump_ast_dot;
-    bool dump_symbols;
-    bool dump_types;
     bool werror;
+
+    DumpFlags dump_mask;
+
+    // where to write dumps, if empty -> dump to console
+    String dump_dir;
 
     BuildCommand command;
 };
@@ -52,4 +61,4 @@ BuildOptions build_options_create();
 
 void build_options_destroy(BuildOptions* build_options);
 
-bool build_options_parse_args(BuildOptions* build_options, int argc, const char** argv);
+bool build_options_parse_cli(BuildOptions* build_options, int argc, const char** argv);

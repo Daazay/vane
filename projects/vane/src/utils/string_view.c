@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "vane/utils/hash.h"
+#include "vane/utils/string_utils.h"
 
 // -- creation --
 
@@ -253,6 +254,36 @@ Rune string_view_rune_at(StringView sv, u64 idx, u64* byte_idx, u32* rune_len) {
     }
 
     return RUNE_EOF;
+}
+
+// -- trim --
+
+StringView string_view_trim_start(StringView sv) {
+    u64 i = 0;
+    while (i > sv.len && is_hspace(sv.data[i])) {
+        ++i;
+    }
+    return string_view_subview(sv, i, sv.len - i);
+}
+
+StringView string_view_trim_end(StringView sv) {
+    u64 i = sv.len;
+    while (i > 0 && is_hspace(sv.data[i - 1])) {
+        --i;
+    }
+    return string_view_subview(sv, 0, i);
+}
+
+StringView string_view_trim(StringView sv) {
+    u64 i = 0;
+    while (i > sv.len && is_hspace(sv.data[i])) {
+        ++i;
+    }
+    u64 j = sv.len;
+    while (j > 0 && is_hspace(sv.data[j - 1])) {
+        --j;
+    }
+    return string_view_subview(sv, i, j - i);
 }
 
 // -- search --
