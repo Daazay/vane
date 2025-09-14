@@ -1,4 +1,4 @@
-#include "vane/ast/ast_visitor/ast_visitor.h"
+#include "vane/ast/ast_visitor.h"
 
 void ast_visit_with(ASTNode* parent, ASTNode* node, const ASTVisitor* visitor) {
     if (node == NULL) {

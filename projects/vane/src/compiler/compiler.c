@@ -7,8 +7,9 @@
 #include "vane/utils/string_builder.h"
 #include "vane/utils/env.h"
 
-#include "vane/ast/ast_visitor/ast_dot_printer.h"
-#include "vane/ast/ast_visitor/ast_simple_printer.h"
+#include "vane/dump/ast_dump.h"
+#include "vane/dump/scope_dump.h"
+#include "vane/dump/types_dump.h"
 
 #include "vane/sema/scope.h"
 
@@ -40,7 +41,7 @@ static inline void compiler_dump_requested(const Compiler* compiler) {
     assert(compiler != NULL && compiler->build_options != NULL);
 
     if (IS_FLAG_SET(compiler->build_options->dump_mask, DUMP_FLAG_AST_TEXT)) {
-        //compiler_dump_ast(compiler);
+        compiler_dump_ast_text(compiler);
     }
     if (IS_FLAG_SET(compiler->build_options->dump_mask, DUMP_FLAG_AST_DOT)) {
         compiler_dump_ast_dot(compiler);
@@ -464,7 +465,7 @@ Package* compiler_resolve_import(Compiler* compiler, SourceFile* source_file, co
     return pkg;
 }
 
-void compiler_dump_ast(const Compiler* compiler) {
+void compiler_dump_ast_text(const Compiler* compiler) {
     assert(compiler != NULL);
 
     HashmapIterator package_it = hashmap_get_it(&compiler->packages);
@@ -476,7 +477,7 @@ void compiler_dump_ast(const Compiler* compiler) {
         for (u32 i = 0; i < package->source_files.size; ++i) {
             const SourceFile* sf = vector_at(package->source_files, i);
             printf("[file: " SV_FMT "]\n", SV_ARG(sf->path));
-            ast_print_simple(sf->ast, stdout);
+            dump_ast_text(sf->ast);
         }
     }
 }
@@ -493,131 +494,7 @@ void compiler_dump_ast_dot(const Compiler* compiler) {
         for (u32 i = 0; i < package->source_files.size; ++i) {
             const SourceFile* sf = vector_at(package->source_files, i);
             printf("[file: " SV_FMT "]\n", SV_ARG(sf->path));
-            ast_print_dot(sf->ast, stdout);
-        }
-    }
-}
-
-static inline void indent(u32 level) {
-    for (u32 i = 0; i < level; ++i) {
-        printf("  ");
-    }
-}
-
-static inline void print_loc(TokenLoc loc) {
-    printf(SV_FMT ":%d:%d-%d:%d", SV_ARG(loc.path),
-        loc.begin.line, loc.begin.column,
-        loc.end.line, loc.end.column
-    );
-}
-
-static inline void print_sv_quoted(StringView sv) {
-    printf("\"" SV_FMT "\"", SV_ARG(sv));
-}
-
-static inline void compiler_dump_symbol_one(const Symbol* sym, u32 indent_lvl, bool compact) {
-    if (compact) {
-        indent(indent_lvl);
-        printf("- { kind: %s, name: " SV_FMT, symbol_kind_get_name(sym->kind), SV_ARG(sym->name));
-        if (sym->kind == SYMBOL_IMPORT && sym->as.import.target != NULL) {
-            printf(", target: " SV_FMT, SV_ARG(sym->as.import.target->path));
-        }
-        if (sym->ast != NULL) {
-            printf(", loc: ");
-            print_loc(sym->ast->loc);
-        }
-        puts(" }");
-        return;
-    }
-
-    // multi-line block mapping
-    indent(indent_lvl);
-    printf("- kind: %s\n", symbol_kind_get_name(sym->kind));
-
-    indent(indent_lvl + 1);
-    printf("name: " SV_FMT "\n", SV_ARG(sym->name));
-
-    if (sym->kind == SYMBOL_IMPORT && sym->as.import.target != NULL) {
-        indent(indent_lvl + 1);
-        printf("target: " SV_FMT "\n", SV_ARG(sym->as.import.target->path));
-    }
-
-    if (sym->ast != NULL) {
-        indent(indent_lvl + 1);
-        printf("loc: ");
-        print_loc(sym->ast->loc);
-        putchar('\n');
-    }
-}
-
-static void compiler_dump_scope(const Scope* scope, u32 indent_lvl, bool as_list_item) {
-    if (scope == NULL) {
-        indent(indent_lvl);
-        puts("kind: unknown");
-        return;
-    }
-
-    // Header
-    if (as_list_item) {
-        indent(indent_lvl);
-        printf("- kind: %s\n", scope_kind_get_name(scope->kind));
-    }
-    else {
-        indent(indent_lvl);
-        printf("kind: %s\n", scope_kind_get_name(scope->kind));
-    }
-
-    u32 base = indent_lvl + (as_list_item ? 1u : 0u);
-
-    // optional function name
-    if (scope->kind == SCOPE_FUNCTION && scope->ast != NULL && scope->ast->symbol != NULL) {
-        indent(base);
-        printf("name: " SV_FMT "\n", SV_ARG(scope->ast->symbol->name));
-    }
-
-    // symbols
-    {
-        bool has_symbols = (scope->symbol_sets.size > 0);
-        indent(base);
-        puts("symbols:");
-        if (!has_symbols) {
-            indent(base + 1);
-            puts("[]");
-        }
-        else {
-            bool compact = (scope->kind == SCOPE_FUNCTION);
-
-            HashmapIterator it = hashmap_get_it(&scope->symbol_sets);
-            StringView key = STRING_VIEW_EMPTY;
-            SymbolSet set = { 0 };
-
-            while (hashmap_it_next(&it, &key, &set)) {
-                for (u32 i = 0; i < SYMBOL_KIND_COUNT - 1; ++i) {
-                    Symbol* symbol = set.by_kind[i];
-                    if (symbol == NULL) {
-                        continue;
-                    }
-
-                    compiler_dump_symbol_one(symbol, base + 1, compact);
-                }
-            }
-        }
-    }
-
-    // child scopes
-    {
-        bool has_children = (scope->scopes.size > 0);
-        indent(base);
-        puts("scopes:");
-        if (!has_children) {
-            indent(base + 1);
-            puts("[]");
-        }
-        else {
-            for (u32 i = 0; i < scope->scopes.size; ++i) {
-                Scope* child = vector_at(scope->scopes, i);
-                compiler_dump_scope(child, base + 1, true);
-            }
+            dump_ast_dot(sf->ast);
         }
     }
 }
@@ -629,7 +506,7 @@ static void compiler_dump_package_scopes(const Package* package) {
 
     printf("package: " SV_FMT "\n", SV_ARG(package->path));
     puts("scope:");
-    compiler_dump_scope(package->scope, 1, false);
+    dump_scope(package->scope);
     putchar('\n');
 }
 
@@ -647,267 +524,11 @@ void compiler_dump_symbols(const Compiler* compiler) {
     }
 }
 
-static void print_type_inline_alias(const Type* t);
-static void print_type_inline_canonical(const Type* t);
-
-/* Returns builtin name for comparison/printing; NULL if not a builtin we name directly. */
-static const char* builtin_kind_name(const Type* t) {
-    if (!t || t->kind != TYPE_BUILTIN) return NULL;
-    switch (t->as.builtin.kind) {
-    case TYPE_BUILTIN_VOID: return "void";
-    case TYPE_BUILTIN_BOOL: return "bool";
-    case TYPE_BUILTIN_U8:   return "u8";
-    case TYPE_BUILTIN_I8:   return "i8";
-    case TYPE_BUILTIN_U16:  return "u16";
-    case TYPE_BUILTIN_I16:  return "i16";
-    case TYPE_BUILTIN_U32:  return "u32";
-    case TYPE_BUILTIN_I32:  return "i32";
-    case TYPE_BUILTIN_U64:  return "u64";
-    case TYPE_BUILTIN_I64:  return "i64";
-    case TYPE_BUILTIN_ANY:  return "any";
-    default: return NULL;
-    }
-}
-
-/* Follow alias chain to a non-alias canonical type (but do not loop forever). */
-static const Type* type_canonical(const Type* t) {
-    const u32 kMaxDepth = 256;
-    u32 depth = 0;
-    while (t && t->kind == TYPE_ALIAS && depth++ < kMaxDepth) {
-        t = t->as.alias.target;
-    }
-    return t;
-}
-
-/* Print function type canonical: params/ret are canonical too. */
-static void print_fun_type_canonical(const Type* t) {
-    putchar('(');
-    for (u32 i = 0; i < t->as.fun.param_count; ++i) {
-        if (i) printf(", ");
-        print_type_inline_canonical(t->as.fun.params[i]);
-    }
-    printf(") -> ");
-    print_type_inline_canonical(t->as.fun.ret);
-}
-
-/* Print function type alias-friendly: keep aliases on the LHS view. */
-static void print_fun_type_alias(const Type* t) {
-    putchar('(');
-    for (u32 i = 0; i < t->as.fun.param_count; ++i) {
-        if (i) printf(", ");
-        print_type_inline_alias(t->as.fun.params[i]);
-    }
-    printf(") -> ");
-    print_type_inline_alias(t->as.fun.ret);
-}
-
-/* Canonical printer: expands aliases entirely. */
-static void print_type_inline_canonical(const Type* t) {
-    if (!t) { printf("<null>"); return; }
-
-    const Type* c = type_canonical(t);
-    if (!c) { printf("<null>"); return; }
-
-    switch (c->kind) {
-    case TYPE_UNRESOLVED:
-        printf("<unresolved " SV_FMT ">", SV_ARG(c->as.unresolved.name));
-        return;
-
-    case TYPE_BUILTIN: {
-        const char* name = builtin_kind_name(c);
-        if (name) { printf("%s", name); }
-        else { printf("<builtin:%u>", (unsigned)c->as.builtin.kind); }
-        return;
-    }
-
-    case TYPE_POINTER:
-        putchar('^'); print_type_inline_canonical(c->as.pointer.base); return;
-
-    case TYPE_ARRAY:
-        printf("[%u]", (unsigned)c->as.array.size);
-        print_type_inline_canonical(c->as.array.elem);
-        return;
-
-    case TYPE_SLICE:
-        printf("[]");
-        print_type_inline_canonical(c->as.slice.elem);
-        return;
-
-    case TYPE_FUNCTION:
-        print_fun_type_canonical(c);
-        return;
-
-    case TYPE_ALIAS:
-        // Canonical view should never end here, but handle gracefully:
-        print_type_inline_canonical(c->as.alias.target);
-        return;
-
-    default:
-        printf("<type kind:%u>", (unsigned)c->kind);
-        return;
-    }
-}
-
-static void print_type_inline_alias(const Type* t) {
-    if (!t) { printf("<null>"); return; }
-
-    switch (t->kind) {
-    case TYPE_UNRESOLVED:
-        printf("<unresolved " SV_FMT ">", SV_ARG(t->as.unresolved.name));
-        return;
-
-    case TYPE_BUILTIN: {
-        const char* name = builtin_kind_name(t);
-        if (name) { printf("%s", name); }
-        else { printf("<builtin:%u>", (unsigned)t->as.builtin.kind); }
-        return;
-    }
-
-    case TYPE_POINTER:
-        putchar('^'); print_type_inline_alias(t->as.pointer.base); return;
-
-    case TYPE_ARRAY:
-        printf("[%u]", (unsigned)t->as.array.size);
-        print_type_inline_alias(t->as.array.elem);
-        return;
-
-    case TYPE_SLICE:
-        printf("[]");
-        print_type_inline_alias(t->as.slice.elem);
-        return;
-
-    case TYPE_FUNCTION:
-        print_fun_type_alias(t);
-        return;
-
-    case TYPE_ALIAS: {
-        // Print alias name as-is.
-        printf(SV_FMT, SV_ARG(t->as.alias.name));
-
-        // If alias is effectively a self-alias (e.g., "u8 = u8"), suppress " (= ...)" noise.
-        const Type* tgt = t->as.alias.target;
-        const char* tgt_builtin = builtin_kind_name(type_canonical(tgt));
-
-        // Compare alias name with canonical builtin name if any.
-        bool self_like = false;
-        if (tgt_builtin) {
-            StringView alias_name = t->as.alias.name;
-            if (string_view_eq_sv(alias_name, string_view_from_cstr(tgt_builtin))) {
-                self_like = true;
-            }
-        }
-        if (!self_like) {
-            printf(" (= ");
-            print_type_inline_canonical(tgt);   // de-alias RHS
-            putchar(')');
-        }
-        return;
-    }
-
-    default:
-        printf("<type kind:%u>", (unsigned)t->kind);
-        return;
-    }
-}
-
-/* Wrapper to match your existing calls */
-static void print_type_inline(const Type* t) {
-    print_type_inline_alias(t);
-}
-
-static void compiler_dump_scope_types(const Scope* scope, u32 indent_lvl, bool as_list_item) {
-    if (scope == NULL) {
-        indent(indent_lvl);
-        puts("kind: unknown");
-        return;
-    }
-
-    // Header
-    if (as_list_item) {
-        indent(indent_lvl);
-        printf("- kind: %s\n", scope_kind_get_name(scope->kind));
-    }
-    else {
-        indent(indent_lvl);
-        printf("kind: %s\n", scope_kind_get_name(scope->kind));
-    }
-
-    const u32 base = indent_lvl + (as_list_item ? 1u : 0u);
-
-    // optional function name
-    if (scope->kind == SCOPE_FUNCTION && scope->ast != NULL && scope->ast->symbol) {
-        indent(base);
-        printf("name: " SV_FMT "\n", SV_ARG(scope->ast->symbol->name));
-    }
-
-    // print symbol types
-    {
-        bool has_symbols = (scope->symbol_sets.size > 0);
-        indent(base);
-        puts("symbol_types:");
-        if (!has_symbols) {
-            indent(base + 1);
-            puts("[]");
-        }
-        else {
-            HashmapIterator it = hashmap_get_it(&scope->symbol_sets);
-            StringView key = STRING_VIEW_EMPTY;
-            SymbolSet set = {0};
-
-            while (hashmap_it_next(&it, &key, &set)) {
-                for (u32 i = 0; i < SYMBOL_KIND_COUNT - 1; ++i) {
-                    Symbol* symbol = set.by_kind[i];
-                    if (symbol == NULL) {
-                        continue;
-                    }
-
-                    indent(base + 1);
-                    printf("- { kind: %s, name: " SV_FMT, symbol_kind_get_name(symbol->kind), SV_ARG(symbol->name));
-
-
-                    if (symbol->ast != NULL) {
-                        printf(", loc: ");
-                        print_loc(symbol->ast->loc);
-                    }
-
-                    // type if available
-                    printf(", type: ");
-                    if (symbol->kind == SYMBOL_IMPORT) {
-                        printf("<n/a>");
-                    }
-                    else if (symbol->as.typed.type) {
-                        print_type_inline(symbol->as.typed.type);
-                    }
-                    else {
-                        printf("<unset>");
-                    }
-                    puts(" }");
-                }
-            }
-        }
-    }
-
-    // recurse into child scopes
-    {
-        bool has_scopes = (scope->scopes.size > 0);
-        indent(base); puts("scopes:");
-        if (!has_scopes) {
-            indent(base + 1); puts("[]");
-        }
-        else {
-            for (u32 i = 0; i < scope->scopes.size; ++i) {
-                const Scope* child = vector_at(scope->scopes, i);
-                compiler_dump_scope_types(child, base + 1, true);
-            }
-        }
-    }
-}
-
 static void compiler_dump_package_types(const Package* package) {
     if (!package || !package->scope) return;
     printf("package: " SV_FMT "\n", SV_ARG(package->path));
     puts("scope:");
-    compiler_dump_scope_types(package->scope, 1, false);
+    dump_types(package->scope);
     putchar('\n');
 }
 

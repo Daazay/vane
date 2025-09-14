@@ -5,7 +5,7 @@
 #include "vane/utils/path.h"
 #include "vane/scanner/token_stream.h"
 #include "vane/ast/ast_parser.h"
-#include "vane/ast/ast_visitor/ast_visitor.h"
+#include "vane/ast/ast_visitor.h"
 #include "vane/compiler/compiler.h"
 #include "vane/sema/scope.h"
 #include "vane/cfg/cfg_function.h"
