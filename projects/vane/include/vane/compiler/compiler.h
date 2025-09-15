@@ -84,6 +84,8 @@ bool compiler_bind_symbols(Compiler* compiler);
 
 bool compiler_resolve_types(Compiler* compiler);
 
+bool compiler_resolve_entry_point(Compiler* compiler);
+
 bool compiler_validate_semantics(Compiler* compiler);
 
 bool compiler_build_cfgs(Compiler* compiler);

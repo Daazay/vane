@@ -267,6 +267,21 @@ static inline bool handle_emit_dir(ArgParser* parser, const char* value) {
     return true;
 }
 
+static inline bool handle_entry_symbol(ArgParser* parser, const char* value) {
+    assert(parser != NULL);
+
+    if (value == NULL) {
+        eprintln("missing value for --entry (expected a name)");
+        return false;
+    }
+    if (!is_string_empty(parser->options->entry_symbol)) {
+        string_destroy(&parser->options->entry_symbol);
+    }
+
+    parser->options->entry_symbol = string_from_cstr(value);
+    return true;
+}
+
 static inline bool process_collection_item(ArgParser* parser, StringView item, void* data) {
     assert(parser != NULL);
 
@@ -386,24 +401,25 @@ static inline bool handle_project_path_arg(ArgParser* parser, const char* value)
 }
 
 static OptionSpec general_options[] = {
-    { "collection", 'c', true,  &handle_collection,  "Add collection(s): NAME=PATH[,NAME=PATH...].",                                          },
-    { "define",     'D', true,  &handle_define,      "Add define(s): KEY=VALUE[,KEY=VALUE...].",                                              },
+    { "collection",  'I', true,  &handle_collection,   "Add import collection(s): NAME=PATH[,NAME=PATH...] (like an include path).",                     },
+    { "define",      'D', true,  &handle_define,       "Define compile-time constants(s): KEY=VALUE[,KEY=VALUE...] (not yet implemented).",              },
 
-    { "emit",        0,  true,  &handle_emit,        "What to emit (comma-separated): ast, ast-dot, symbols, types, cfg, cfg-dot, all.",      },
-    { "emit-out",    0,  true,  &handle_emit_dir,    "Where to emit: console | file | both.",                                                 },
-    { "emit-dir",    0,  true,  &handle_emit_dir,    "Directory to save dumps when --emit-out=file|both",                                     },
+    { "emit",        'E', true,  &handle_emit,         "Select IR/analysis outputs (comma-separated): ast, ast-dot, symbols, types, cfg, cfg-dot, all.", },
+    { "emit-output", 'o', true,  &handle_emit_dir,     "Output destination for --emit results: 'console', 'file', or 'both'.",                           },
 
-    { "verbosity",  'v', true,  &handle_verbosity,   "Set verbosity level (0=errors only, 1=warning, 2=info, 3=note, 4=debug).",              },
-    { "Werror",      0,  false, &handle_werror,      "Treat warnings as errors.",                                                             },
-    { "no-color",    0,  false, &handle_no_color,    "Disable colors in diagnostics.",                                                        },
+    { "entry",       'm', true,  &handle_entry_symbol, "Set entry point function (default: main).",                                                      },
+
+    { "verbosity",  'v', true,  &handle_verbosity,    "Set log verbosity: 0=errors, 1=warnings, 2=info, 3=notes, 4=debug.",                              },
+    { "Werror",      0,  false, &handle_werror,       "Treat all warnings as errors.",                                                                   },
+    { "no-color",    0,  false, &handle_no_color,     "Disable ANSI color codes in diagnostics.",                                                        },
 };
 
 static CommandSpec commands[] = {
-    { "help",  BUILD_COMMAND_HELP,  NULL,                     NULL, 0, NULL,     "Show help message",                 },
-    { "parse", BUILD_COMMAND_PARSE, &handle_project_path_arg, NULL, 0, "<path>", "Parse files to AST",                },
-    { "check", BUILD_COMMAND_CHECK, &handle_project_path_arg, NULL, 0, "<path>", "Build symtables and resolve types", },
-    { "cfg",   BUILD_COMMAND_CFG,   &handle_project_path_arg, NULL, 0, "<path>", "Build CFG for each function",       },
-    { "build", BUILD_COMMAND_BUILD, &handle_project_path_arg, NULL, 0, "<path>", "Run full build pipeline",           },
+    { "help",  BUILD_COMMAND_HELP,  NULL,                     NULL, 0, NULL,     "Show this help message and exit."                                      },
+    { "parse", BUILD_COMMAND_PARSE, &handle_project_path_arg, NULL, 0, "<path>", "Parse source files into an AST.",                                      },
+    { "check", BUILD_COMMAND_CHECK, &handle_project_path_arg, NULL, 0, "<path>", "Run semantic analysis (imports, symbols, type checking, validation).", },
+    { "cfg",   BUILD_COMMAND_CFG,   &handle_project_path_arg, NULL, 0, "<path>", "Build and dump control-flow-graph (CFG) for all functions.",           },
+    { "build", BUILD_COMMAND_BUILD, &handle_project_path_arg, NULL, 0, "<path>", "Run the full compilation pipeline and emit the final program.",        },
 };
 
 static inline bool parse_one_general_option(ArgParser* parser) {
@@ -599,6 +615,8 @@ BuildOptions build_options_create() {
     build_options.emit_out_mode = EMIT_OUT_CONSOLE;
     build_options.emit_dir      = STRING_EMPTY;
 
+    build_options.entry_symbol  = STRING_EMPTY;
+
     build_options.command = BUILD_COMMAND_MISSING;
 
     return build_options;
@@ -612,6 +630,7 @@ void build_options_destroy(BuildOptions* build_options) {
     string_destroy(&build_options->project_path);
     string_destroy(&build_options->vane_root_path);
     string_destroy(&build_options->emit_dir);
+    string_destroy(&build_options->entry_symbol);
 
     hashmap_destroy(&build_options->collections);
     hashmap_destroy(&build_options->defines);

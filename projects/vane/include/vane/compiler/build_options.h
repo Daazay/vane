@@ -59,6 +59,8 @@ struct BuildOptions {
     EmitMode  emit_out_mode;
     String    emit_dir;
 
+    String entry_symbol;    // default "main"
+
     BuildCommand command;
 };
 

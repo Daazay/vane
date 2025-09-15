@@ -28,6 +28,8 @@ struct Package {
     Package* parent_package;
     struct Compiler* compiler;
 
+    Symbol* entry_point;
+
     bool is_core;
 };
 

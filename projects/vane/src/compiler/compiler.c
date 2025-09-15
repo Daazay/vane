@@ -22,6 +22,7 @@ enum CompilerPipelineStage {
     COMPILER_PIPE_RESOLVE_SYMBOLS,
     COMPILER_PIPE_BIND_SYMBOLS,
     COMPILER_PIPE_RESOLVE_TYPES,
+    COMPILER_PIPE_RESOLVE_ENTRY,
     COMPILER_PIPE_VALIDATE_SEMANTIC,
     COMPILER_PIPE_BUILD_CFGS,
     COMPILER_PIPE_BUILD,
@@ -305,6 +306,9 @@ static inline bool compiler_run_upto(Compiler* compiler, CompilerPipelineStage s
 
     if (!compiler_resolve_types(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_TYPES) return !compiler_should_halt(compiler);
+
+    if (!compiler_resolve_entry_point(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_ENTRY) return !compiler_should_halt(compiler);
 
     if (!compiler_validate_semantics(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_VALIDATE_SEMANTIC) return !compiler_should_halt(compiler);
@@ -1064,6 +1068,122 @@ bool compiler_resolve_types(Compiler* compiler) {
     }
 
     return status;
+}
+
+static inline StringView compiler_get_entry_point_symbol_name(const Compiler* compiler) {
+    assert(compiler != NULL);
+
+    StringView sv = string_get_view(compiler->build_options->entry_symbol);
+    return is_string_view_empty(sv) ? STR_LIT("main") : sv;
+}
+
+static inline bool compiler_is_entry_signature_ok(StringView entry_name, const Symbol* symbol, TypeSystem* ts, ReportCollector* rc) {
+    assert(symbol != NULL && ts != NULL && rc != NULL);
+    assert(symbol->kind == SYMBOL_FUNCTION);
+
+    const Type* T = type_unwrap(symbol->as.typed.type);
+
+    const u32 n     = T->as.fun.param_count;
+    const Type* ret = T->as.fun.ret;
+
+    bool params_ok = (n == 0);
+    if (!params_ok && n == 1) {
+        const Type* p0 = type_unwrap(T->as.fun.params[0]);
+        if (p0 == NULL || p0->kind != TYPE_SLICE) {
+            params_ok = false;
+        }
+        else {
+            const Type* elem_type = type_unwrap(p0->as.slice.elem);
+            params_ok = (elem_type != NULL && elem_type->kind == TYPE_SLICE && is_type_builtin(type_unwrap(elem_type->as.slice.elem), TYPE_BUILTIN_U8));
+        }
+    }
+
+    bool ret_ok = is_type_builtin(ret, TYPE_BUILTIN_VOID);
+    if (!ret_ok) {
+        TypeBuiltinKind k = TYPE_BUILTIN_UNKNOWN;
+        // allow any sized int (i8/u8/..)
+        ret_ok = is_type_sized_integer(ret, &k);
+    }
+
+    if (!params_ok || !ret_ok) {
+        String got_sig = type_to_str(T);
+        REPORT_ERROR_LOC(rc, DIAG_SEMA_TYPES, symbol->ast->loc,
+            "invalid entry function signature for '"SV_FMT"'.\n"
+            "    expected params: () or ([]string)\n"
+            "    expected return: void or sized integer\n"
+            "    but got:         "SV_FMT"\n",
+            SV_ARG(entry_name), SV_ARG(got_sig)
+        );
+        string_destroy(&got_sig);
+        return false;
+    }
+    return true;
+}
+
+bool compiler_resolve_entry_point(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    if (compiler->entry_point != NULL) {
+        return true;
+    }
+
+    StringView entry_name = compiler_get_entry_point_symbol_name(compiler);
+
+    typedef struct { Package* package; Symbol* symbol; } Hit;
+    Hit hits[32]            = { 0 };
+    const u32 max_hit_count = ARR_SIZE(hits);
+    u32 hit_count           = 0;
+
+    HashmapIterator it = hashmap_get_it(&compiler->packages);
+    Package* package = NULL;
+
+    while (hashmap_it_next(&it, NULL, &package)) {
+        if (package == NULL || package->scope == NULL) {
+            continue;
+        }
+
+        Symbol* symbol = scope_lookup_current(package->scope, entry_name, SYMBOL_NS_FUNC);
+        if (symbol == NULL) {
+            continue;
+        }
+
+        // resolve / validate its type right away to filter bad signatures out
+        if (!compiler_is_entry_signature_ok(entry_name, symbol, &compiler->ts, &compiler->rc)) {
+            continue;
+        }
+
+        if (hit_count < max_hit_count) {
+            hits[hit_count++] = (Hit) { .package = package, .symbol = symbol, };
+        }
+        else {
+            REPORT_ERROR(&compiler->rc, DIAG_DRIVER_PROJECT, "too many candidate entry points named '"SV_FMT".'", SV_ARG(entry_name));
+            return false;
+        }
+    }
+
+    if (hit_count == 0) {
+        REPORT_ERROR(&compiler->rc, DIAG_DRIVER_PROJECT, "entry point function '" SV_FMT "' was not found in any loaded package.", SV_ARG(entry_name));
+        REPORT_NOTE(&compiler->rc, DIAG_DRIVER_PROJECT, "Create a function 'fun " SV_FMT "()' or pass a different name with --entry=<name>.", SV_ARG(entry_name));
+        return false;
+    }
+
+    if (hit_count > 1) {
+        REPORT_ERROR(&compiler->rc, DIAG_DRIVER_PROJECT, "multiple candidate entry points named '" SV_FMT "' found. Please disambiguate.", SV_ARG(entry_name));
+        for (u32 i = 0; i < hit_count; ++i) {
+            StringView p = hits[i].package->path;
+            String sig = type_to_str(hits[i].symbol->as.typed.type);
+
+            REPORT_NOTE(&compiler->rc, DIAG_DRIVER_PROJECT, "candidate in package '" SV_FMT "' with signature " SV_FMT, SV_ARG(p), SV_ARG(sig));
+            string_destroy(&sig);
+        }
+        return false;
+    }
+
+    // Unique winner
+    hits[0].package->entry_point = hits[0].symbol;
+    compiler->entry_point = hits[0].package;
+    REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "entry point set to '" SV_FMT "' in package '" SV_FMT "'.", SV_ARG(entry_name), SV_ARG(hits[0].package->path));
+    return true;
 }
 
 bool compiler_validate_semantics(Compiler* compiler) {
