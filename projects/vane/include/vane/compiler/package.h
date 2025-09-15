@@ -8,6 +8,7 @@
 #include "vane/compiler/source_file.h"
 
 #include "vane/sema/scope.h"
+#include "vane/sema/call_graph.h"
 
 struct Compiler;
 typedef struct Package Package;
@@ -30,6 +31,8 @@ struct Package {
 
     Symbol* entry_point;
 
+    CallGraph* call_graph;
+
     bool is_core;
 };
 
@@ -46,5 +49,7 @@ bool package_resolve_symbol_decls(Package* package, Scope* global_scope);
 bool package_bind_symbols(Package* package);
 
 bool package_validate_semantics(Package* package);
+
+bool package_build_call_graph(Package* package);
 
 bool package_build_cfg(Package* package);

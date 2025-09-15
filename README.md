@@ -29,3 +29,7 @@ The project uses Premake5 for build configuration. The build system is modular a
 - `premake5.lua` - Main configuration file wich includes other
 - `workspace.lua` - Workspace and global project settings
 - `actions.lua` - Custom actions and utility functions
+
+## Example
+
+`vane -I vane-root=./vane-root -v 4 --emit types build ./resources/game-of-life`

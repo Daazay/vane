@@ -174,14 +174,16 @@ static inline bool set_dump_flag(EmitFlags* mask, StringView token) {
 
     if (string_view_eq_sv(token, STR_LIT("all"))) {
         SET_FLAG(*mask,
-            EMIT_FLAG_AST_TEXT | EMIT_FLAG_AST_DOT |
-            EMIT_FLAG_SYMBOLS  | EMIT_FLAG_TYPES   |
-            EMIT_FLAG_CFG_DOT
+            EMIT_FLAG_AST_TXT        | EMIT_FLAG_AST_DOT |
+            EMIT_FLAG_SYMBOLS        |
+            EMIT_FLAG_TYPES          |
+            EMIT_FLAG_CFG_DOT        |
+            EMIT_FLAG_CALL_GRAPH_TXT | EMIT_FLAG_CALL_GRAPH_DOT
         );
         return true;
     }
     if (string_view_eq_sv(token, STR_LIT("ast")) || string_view_eq_sv(token, STR_LIT("ast-text"))) {
-        SET_FLAG(*mask, EMIT_FLAG_AST_TEXT);
+        SET_FLAG(*mask, EMIT_FLAG_AST_TXT);
         return true;
     }
     else if (string_view_eq_sv(token, STR_LIT("ast-dot"))) {
@@ -200,8 +202,16 @@ static inline bool set_dump_flag(EmitFlags* mask, StringView token) {
         SET_FLAG(*mask, EMIT_FLAG_CFG_DOT);
         return true;
     }
+    else if (string_view_eq_sv(token, STR_LIT("call-graph"))) {
+        SET_FLAG(*mask, EMIT_FLAG_CALL_GRAPH_TXT);
+        return true;
+    }
+    else if (string_view_eq_sv(token, STR_LIT("call-graph-dot"))) {
+        SET_FLAG(*mask, EMIT_FLAG_CALL_GRAPH_DOT);
+        return true;
+    }
 
-    eprintln("unknown dump item '"SV_FMT"' (valid: ast, ast-dot, symbols, types, cfg-dot, all)", SV_ARG(token));
+    eprintln("unknown dump item '"SV_FMT"' (valid: ast, ast-dot, symbols, types, cfg-dot, call-graph, call-graph-dot, all)", SV_ARG(token));
     return false;
 }
 
@@ -226,7 +236,7 @@ static inline bool handle_emit_out(ArgParser* parser, const char* value) {
     assert(parser != NULL);
 
     if (value == NULL) {
-        eprintln("missing value for --emit-out (expected: console | file | both)");
+        eprintln("missing value for --emit-output (expected: console | file | both)");
         return false;
     }
 
@@ -243,7 +253,7 @@ static inline bool handle_emit_out(ArgParser* parser, const char* value) {
         parser->options->emit_out_mode = EMIT_OUT_BOTH;
         return true;
     }
-    eprintln("invalid --emit-out value '"SV_FMT"' (expected: console | file | both)", SV_ARG(v));
+    eprintln("invalid --emit-output value '"SV_FMT"' (expected: console | file | both)", SV_ARG(v));
     return false;
 }
 
@@ -401,25 +411,26 @@ static inline bool handle_project_path_arg(ArgParser* parser, const char* value)
 }
 
 static OptionSpec general_options[] = {
-    { "collection",  'I', true,  &handle_collection,   "Add import collection(s): NAME=PATH[,NAME=PATH...] (like an include path).",                     },
-    { "define",      'D', true,  &handle_define,       "Define compile-time constants(s): KEY=VALUE[,KEY=VALUE...] (not yet implemented).",              },
+    { "collection",  'I', true,  &handle_collection,   "Add import collection(s): NAME=PATH[,NAME=PATH...] (like an include path).",                                                 },
+    { "define",      'D', true,  &handle_define,       "Define compile-time constants(s): KEY=VALUE[,KEY=VALUE...] (not yet implemented).",                                          },
 
-    { "emit",        'E', true,  &handle_emit,         "Select IR/analysis outputs (comma-separated): ast, ast-dot, symbols, types, cfg, cfg-dot, all.", },
-    { "emit-output", 'o', true,  &handle_emit_dir,     "Output destination for --emit results: 'console', 'file', or 'both'.",                           },
+    { "emit",        'E', true,  &handle_emit,         "Select IR/analysis outputs (comma-separated): ast, ast-dot, symbols, types, cfg, cfg-dot, call-graph, call-graph-dot, all.", },
+    { "emit-output", 'o', true,  &handle_emit_out,     "Output destination for --emit results: 'console', 'file', or 'both'.",                                                       },
+    { "emit-dir",    'o', true,  &handle_emit_dir,     "Directory to place files when --emit-output=file or both (default: dumps).",                                                 },
 
-    { "entry",       'm', true,  &handle_entry_symbol, "Set entry point function (default: main).",                                                      },
+    { "entry",       'm', true,  &handle_entry_symbol, "Set entry point function (default: main).",                                                                                  },
 
-    { "verbosity",  'v', true,  &handle_verbosity,    "Set log verbosity: 0=errors, 1=warnings, 2=info, 3=notes, 4=debug.",                              },
-    { "Werror",      0,  false, &handle_werror,       "Treat all warnings as errors.",                                                                   },
-    { "no-color",    0,  false, &handle_no_color,     "Disable ANSI color codes in diagnostics.",                                                        },
+    { "verbosity",   'v', true,  &handle_verbosity,    "Set log verbosity (default: 3): 0=errors, 1=warnings, 2=info, 3=notes, 4=debug.",                                            },
+    { "Werror",       0,  false, &handle_werror,       "Treat all warnings as errors.",                                                                                              },
+    { "no-color",     0,  false, &handle_no_color,     "Disable ANSI color codes in diagnostics.",                                                                                   },
 };
 
 static CommandSpec commands[] = {
-    { "help",  BUILD_COMMAND_HELP,  NULL,                     NULL, 0, NULL,     "Show this help message and exit."                                      },
-    { "parse", BUILD_COMMAND_PARSE, &handle_project_path_arg, NULL, 0, "<path>", "Parse source files into an AST.",                                      },
-    { "check", BUILD_COMMAND_CHECK, &handle_project_path_arg, NULL, 0, "<path>", "Run semantic analysis (imports, symbols, type checking, validation).", },
-    { "cfg",   BUILD_COMMAND_CFG,   &handle_project_path_arg, NULL, 0, "<path>", "Build and dump control-flow-graph (CFG) for all functions.",           },
-    { "build", BUILD_COMMAND_BUILD, &handle_project_path_arg, NULL, 0, "<path>", "Run the full compilation pipeline and emit the final program.",        },
+    { "help",  BUILD_COMMAND_HELP,  NULL,                     NULL, 0, NULL,     "Show this help message and exit."                                                                  },
+    { "parse", BUILD_COMMAND_PARSE, &handle_project_path_arg, NULL, 0, "<path>", "Parse source files into an AST.",                                                                  },
+    { "check", BUILD_COMMAND_CHECK, &handle_project_path_arg, NULL, 0, "<path>", "Run semantic analysis (imports, symbols, type checking, validation).",                             },
+    { "cfg",   BUILD_COMMAND_CFG,   &handle_project_path_arg, NULL, 0, "<path>", "Build and dump control-flow-graph (CFG) for all functions.",                                       },
+    { "build", BUILD_COMMAND_BUILD, &handle_project_path_arg, NULL, 0, "<path>", "Run the full compilation pipeline and emit the final program.",                                    },
 };
 
 static inline bool parse_one_general_option(ArgParser* parser) {
@@ -607,13 +618,13 @@ BuildOptions build_options_create() {
         HASHMAP_VALUE_SPECS(String, &string_destroy)
     );
 
-    build_options.log_verbosity = 0;
+    build_options.log_verbosity = 3;
     build_options.with_color = is_terminal_support_colors();
     build_options.werror = false;
 
     build_options.emit_mask     = EMIT_FLAG_NONE;
     build_options.emit_out_mode = EMIT_OUT_CONSOLE;
-    build_options.emit_dir      = STRING_EMPTY;
+    build_options.emit_dir      = string_from_cstr("dumps");
 
     build_options.entry_symbol  = STRING_EMPTY;
 
@@ -629,6 +640,7 @@ void build_options_destroy(BuildOptions* build_options) {
 
     string_destroy(&build_options->project_path);
     string_destroy(&build_options->vane_root_path);
+
     string_destroy(&build_options->emit_dir);
     string_destroy(&build_options->entry_symbol);
 

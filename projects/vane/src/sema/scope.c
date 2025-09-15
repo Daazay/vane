@@ -45,7 +45,7 @@ const char* scope_kind_get_name(ScopeKind kind) {
     }
 }
 
-Scope* scope_create(ScopeKind kind, Scope* parent, const ASTNode* ast) {
+Scope* scope_create(ScopeKind kind, Scope* parent, const ASTNode* ast, struct Package* package) {
     Scope* scope = malloc(sizeof(Scope));
     assert(scope != NULL);
 
@@ -55,6 +55,7 @@ Scope* scope_create(ScopeKind kind, Scope* parent, const ASTNode* ast) {
     scope->symbol_sets  = (Hashmap) { 0 };
     scope->open_imports = (Vector) { 0 };
     scope->scopes       = (Vector) { 0 };
+    scope->package      = package;
 
     if (parent != NULL) {
         if (parent->scopes.raw == NULL) {

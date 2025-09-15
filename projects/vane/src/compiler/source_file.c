@@ -210,7 +210,7 @@ static inline void source_file_resolve_symbol_decls_pre_fn(ASTNode* parent, ASTN
             scope_add_symbol(ctx->scope, f);
         }
 
-        ctx->scope = scope_create(SCOPE_FUNCTION, ctx->scope, node);
+        ctx->scope = scope_create(SCOPE_FUNCTION, ctx->scope, node, ctx->scope->package);
         node->scope = ctx->scope;
     } break;
 
@@ -288,18 +288,18 @@ static inline void source_file_resolve_symbol_decls_pre_fn(ASTNode* parent, ASTN
     } break;
 
     case AST_NODE_STMT_BLOCK: {
-        ctx->scope = scope_create(SCOPE_BASIC, ctx->scope, node);
+        ctx->scope = scope_create(SCOPE_BASIC, ctx->scope, node, ctx->scope->package);
         node->scope = ctx->scope;
     } break;
 
     case AST_NODE_STMT_BRANCH: {
-        ctx->scope = scope_create(SCOPE_BRANCH, ctx->scope, node);
+        ctx->scope = scope_create(SCOPE_BRANCH, ctx->scope, node, ctx->scope->package);
         node->scope = ctx->scope;
     } break;
 
     case AST_NODE_STMT_WHILE:
     case AST_NODE_STMT_DO: {
-        ctx->scope = scope_create(SCOPE_LOOP, ctx->scope, node);
+        ctx->scope = scope_create(SCOPE_LOOP, ctx->scope, node, ctx->scope->package);
         node->scope = ctx->scope;
     } break;
 
@@ -932,7 +932,7 @@ bool source_file_resolve_symbol_decls(SourceFile* source_file) {
     }
 
     // Create source-file scope chained to the package
-    source_file->scope = scope_create(SCOPE_SOURCE_FILE, source_file->package->scope, source_file->ast);
+    source_file->scope = scope_create(SCOPE_SOURCE_FILE, source_file->package->scope, source_file->ast, source_file->package);
 
     bool is_good = true;
     // Bring imports into this scope (alias imports or open-imports)

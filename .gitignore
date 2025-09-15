@@ -15,3 +15,5 @@ Makefile
 *.cfg.dot
 *.ast.txt
 *.ast.dot
+call-graph.txt
+call-graph.dot

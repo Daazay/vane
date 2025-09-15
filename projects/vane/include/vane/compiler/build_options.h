@@ -25,12 +25,14 @@ enum BuildCommand {
 };
 
 enum EmitFlags {
-    EMIT_FLAG_NONE     = 0,
-    EMIT_FLAG_AST_TEXT = 1 << 0,
-    EMIT_FLAG_AST_DOT  = 1 << 1,
-    EMIT_FLAG_SYMBOLS  = 1 << 2,
-    EMIT_FLAG_TYPES    = 1 << 3,
-    EMIT_FLAG_CFG_DOT  = 1 << 4,
+    EMIT_FLAG_NONE           = 0,
+    EMIT_FLAG_AST_TXT        = 1 << 0,
+    EMIT_FLAG_AST_DOT        = 1 << 1,
+    EMIT_FLAG_SYMBOLS        = 1 << 2,
+    EMIT_FLAG_TYPES          = 1 << 3,
+    EMIT_FLAG_CFG_DOT        = 1 << 4,
+    EMIT_FLAG_CALL_GRAPH_TXT = 1 << 5,
+    EMIT_FLAG_CALL_GRAPH_DOT = 1 << 6,
 };
 
 enum EmitMode {

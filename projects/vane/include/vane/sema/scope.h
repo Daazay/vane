@@ -10,6 +10,7 @@
 
 #include "vane/sema/symbol.h"
 
+struct Package;
 struct TypeSystem;
 struct ReportCollector;
 
@@ -46,6 +47,7 @@ enum SymbolNamespace {
 struct Scope {
     ScopeKind kind;
     Scope* parent;
+    struct Package* package;
     const ASTNode* ast;
 
     // k: [StringView, NULL]
@@ -60,7 +62,7 @@ SymbolNamespaceMask symbol_namespace_for_symbol_kind(SymbolKind kind);
 
 const char* scope_kind_get_name(ScopeKind kind);
 
-Scope* scope_create(ScopeKind kind, Scope* parent, const ASTNode* ast);
+Scope* scope_create(ScopeKind kind, Scope* parent, const ASTNode* ast, struct Package* package);
 
 void scope_destroy(Scope* scope);
 

@@ -6,6 +6,7 @@
 #include "vane/utils/hashmap.h"
 
 #include "vane/sema/type_system.h"
+#include "vane/sema/call_graph.h"
 
 #include "vane/compiler/build_options.h"
 #include "vane/compiler/package.h"
@@ -43,6 +44,8 @@ struct Compiler {
     // Scopes for core packages
     struct Scope* prelude_scope;
 
+    CallGraph* call_graph;
+
     TypeSystem ts;
 };
 
@@ -62,7 +65,7 @@ Package* compiler_resolve_import(Compiler* compiler, SourceFile* source_file, co
 
 // emit functions
 
-void compiler_emit_ast_text(const Compiler* compiler);
+void compiler_emit_ast_txt(const Compiler* compiler);
 
 void compiler_emit_ast_dot(const Compiler* compiler);
 
@@ -71,6 +74,10 @@ void compiler_emit_symbols(const Compiler* compiler);
 void compiler_emit_types(const Compiler* compiler);
 
 void compiler_emit_cfg_dot(const Compiler* compiler);
+
+void compiler_emit_call_graph_txt(const Compiler* compiler);
+
+void compiler_emit_call_graph_dot(const Compiler* compiler);
 
 //
 
@@ -85,6 +92,8 @@ bool compiler_bind_symbols(Compiler* compiler);
 bool compiler_resolve_types(Compiler* compiler);
 
 bool compiler_resolve_entry_point(Compiler* compiler);
+
+bool compiler_build_call_graph(Compiler* compiler);
 
 bool compiler_validate_semantics(Compiler* compiler);
 

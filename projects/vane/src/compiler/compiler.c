@@ -11,6 +11,7 @@
 #include "vane/dump/scope_dump.h"
 #include "vane/dump/types_dump.h"
 #include "vane/dump/cfg_dump.h"
+#include "vane/dump/call_graph_dump.h"
 
 #include "vane/sema/scope.h"
 
@@ -24,6 +25,7 @@ enum CompilerPipelineStage {
     COMPILER_PIPE_RESOLVE_TYPES,
     COMPILER_PIPE_RESOLVE_ENTRY,
     COMPILER_PIPE_VALIDATE_SEMANTIC,
+    COMPILER_PIPE_BUILD_CALL_GRAPH,
     COMPILER_PIPE_BUILD_CFGS,
     COMPILER_PIPE_BUILD,
 };
@@ -150,8 +152,8 @@ static inline void compiler_emit_requested(const Compiler* compiler) {
         }
     }
 
-    if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_AST_TEXT)) {
-        compiler_emit_ast_text(compiler);
+    if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_AST_TXT)) {
+        compiler_emit_ast_txt(compiler);
     }
     if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_AST_DOT)) {
         compiler_emit_ast_dot(compiler);
@@ -164,6 +166,12 @@ static inline void compiler_emit_requested(const Compiler* compiler) {
     }
     if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_CFG_DOT)) {
         compiler_emit_cfg_dot(compiler);
+    }
+    if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_CALL_GRAPH_TXT)) {
+        compiler_emit_call_graph_txt(compiler);
+    }
+    if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_CALL_GRAPH_DOT)) {
+        compiler_emit_call_graph_dot(compiler);
     }
 }
 
@@ -252,7 +260,7 @@ static inline void compiler_setup_prelude_scope(Compiler* compiler, Package* cor
         }
     }
 
-    compiler->prelude_scope = scope_create(SCOPE_PRELUDE, chain_tail, NULL);
+    compiler->prelude_scope = scope_create(SCOPE_PRELUDE, chain_tail, NULL, NULL);
     REPORT_DEBUG(&compiler->rc, DIAG_SEMA_SYMBOLS, "created prelude scope.");
 }
 
@@ -313,6 +321,9 @@ static inline bool compiler_run_upto(Compiler* compiler, CompilerPipelineStage s
     if (!compiler_validate_semantics(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_VALIDATE_SEMANTIC) return !compiler_should_halt(compiler);
 
+    if (!compiler_build_call_graph(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_BUILD_CALL_GRAPH) return !compiler_should_halt(compiler);
+
     if (!compiler_build_cfgs(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_BUILD_CFGS) return !compiler_should_halt(compiler);
 
@@ -341,9 +352,11 @@ Compiler compiler_create(BuildOptions* build_options) {
     );
 
     compiler.entry_point = NULL;
-    compiler.global_scope = scope_create(SCOPE_GLOBAL, NULL, NULL);
+    compiler.global_scope = scope_create(SCOPE_GLOBAL, NULL, NULL, NULL);
 
     compiler.ts = (TypeSystem) { 0 };
+
+    compiler.call_graph = NULL;
 
     compiler.rc = report_collector_create(build_options->log_verbosity);
 
@@ -360,6 +373,8 @@ void compiler_destroy(Compiler* compiler) {
     vector_destroy(&compiler->source_files_queue);
 
     scope_destroy(compiler->global_scope);
+
+    call_graph_destroy(compiler->call_graph);
 
     type_system_destroy(&compiler->ts);
     report_collector_destroy(&compiler->rc);
@@ -641,7 +656,7 @@ static inline String compiler_build_emit_filepath(const BuildOptions* build_opti
     return filepath;
 }
 
-void compiler_emit_ast_text(const Compiler* compiler) {
+void compiler_emit_ast_txt(const Compiler* compiler) {
     assert(compiler != NULL);
 
     HashmapIterator package_it = hashmap_get_it(&compiler->packages);
@@ -883,6 +898,52 @@ void compiler_emit_cfg_dot(const Compiler* compiler) {
             file_writer_write_eol(&cw);
             file_writer_flush(&cw);
         }
+    }
+}
+
+void compiler_emit_call_graph_txt(const Compiler* compiler) {
+    assert(compiler != NULL);
+
+    if (compiler_wants_console(compiler)) {
+        FileWriter cw = { 0 };
+        cw = file_writer_get_stdout();
+
+        file_writer_write_format(&cw, "global call-graph: \n");
+        dump_call_graph_txt(&cw, compiler->call_graph);
+        file_writer_write_eol(&cw);
+    }
+
+    if (compiler_wants_files(compiler)) {
+        String out_filepath = compiler_build_package_emit_filepath(string_get_view(compiler->build_options->emit_dir), STR_LIT("call-graph"), STR_LIT(".txt"));
+        FileWriter fw = { 0 };
+        if (compiler_open_file_for_write(&fw, string_get_view(out_filepath), true, (ReportCollector*)&compiler->rc)) {
+            dump_call_graph_txt(&fw, compiler->call_graph);
+            file_writer_close(&fw);
+        }
+        string_destroy(&out_filepath);
+    }
+}
+
+void compiler_emit_call_graph_dot(const Compiler* compiler) {
+    assert(compiler != NULL);
+
+    if (compiler_wants_console(compiler)) {
+        FileWriter cw = { 0 };
+        cw = file_writer_get_stdout();
+
+        file_writer_write_format(&cw, "global call-graph: \n");
+        dump_call_graph_dot(&cw, compiler->call_graph);
+        file_writer_write_eol(&cw);
+    }
+
+    if (compiler_wants_files(compiler)) {
+        String out_filepath = compiler_build_package_emit_filepath(string_get_view(compiler->build_options->emit_dir), STR_LIT("call-graph"), STR_LIT(".dot"));
+        FileWriter fw = { 0 };
+        if (compiler_open_file_for_write(&fw, string_get_view(out_filepath), true, (ReportCollector*)&compiler->rc)) {
+            dump_call_graph_dot(&fw, compiler->call_graph);
+            file_writer_close(&fw);
+        }
+        string_destroy(&out_filepath);
     }
 }
 
@@ -1184,6 +1245,37 @@ bool compiler_resolve_entry_point(Compiler* compiler) {
     compiler->entry_point = hits[0].package;
     REPORT_INFO(&compiler->rc, DIAG_DRIVER_PROJECT, "entry point set to '" SV_FMT "' in package '" SV_FMT "'.", SV_ARG(entry_name), SV_ARG(hits[0].package->path));
     return true;
+}
+
+bool compiler_build_call_graph(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    if (compiler->call_graph != NULL) {
+        return true;
+    }
+
+    bool status = true;
+
+    CallGraph* graph = call_graph_create(NULL, &compiler->rc);
+
+    HashmapIterator it = hashmap_get_it(&compiler->packages);
+    Package* package = NULL;
+
+    while (hashmap_it_next(&it, NULL, &package)) {
+        if (package == NULL) {
+            continue;
+        }
+        if (package->call_graph == NULL) {
+            if (!package_build_call_graph(package)) {
+                status = false;
+                continue;
+            }
+        }
+        call_graph_merge_into(graph, package->call_graph);
+    }
+
+    compiler->call_graph = graph;
+    return status;
 }
 
 bool compiler_validate_semantics(Compiler* compiler) {
