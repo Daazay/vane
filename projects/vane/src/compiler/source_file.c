@@ -8,6 +8,7 @@
 #include "vane/ast/ast_visitor.h"
 #include "vane/compiler/compiler.h"
 #include "vane/sema/scope.h"
+#include "vane/sema/typecheck.h"
 #include "vane/cfg/cfg_function.h"
 
 static inline FileLoadStatus source_file_load_content(StringView path, String* content, ReportCollector* rc) {
@@ -513,6 +514,275 @@ static inline void source_file_bind_symbols_post_fn(ASTNode* parent, ASTNode* no
     }
 }
 
+static inline bool source_file_sema_is_lvalue_expr(const ASTNode* ast) {
+    assert(ast != NULL);
+    return ast->kind == AST_NODE_EXPR_PLACE  ||
+           ast->kind == AST_NODE_EXPR_MEMBER ||
+           ast->kind == AST_NODE_EXPR_INDEX;
+}
+
+static inline bool source_file_sema_is_assign_token(TokenKind kind) {
+    switch (kind) {
+    case TOKEN_EQUAL:
+    case TOKEN_PLUS_EQUAL:
+    case TOKEN_MINUS_EQUAL:
+    case TOKEN_STAR_EQUAL:
+    case TOKEN_SLASH_EQUAL:
+    case TOKEN_PERCENT_EQUAL:
+        return true;
+
+    default:
+        return false;
+    }
+}
+
+static inline bool source_file_sema_is_compound_assign(TokenKind kind) {
+    switch (kind) {
+    case TOKEN_PLUS_EQUAL:
+    case TOKEN_MINUS_EQUAL:
+    case TOKEN_STAR_EQUAL:
+    case TOKEN_SLASH_EQUAL:
+    case TOKEN_PERCENT_EQUAL:
+        return true;
+
+    default:
+        return false;
+    }
+}
+
+static inline bool source_file_sema_check_condition_is_bool(ASTNode* cond, Scope* scope, TypeSystem* ts, ReportCollector* rc) {
+    assert(cond != NULL && scope != NULL && ts != NULL && rc != NULL);
+
+    Type* ct = typecheck_resolve_expr_type(scope, cond, ts, rc);
+    if (ct == NULL) {
+        return false;
+    }
+
+    const Type* u = type_unwrap(ct);
+    if (!is_type_bool(u) && !is_type_any(u)) {
+        String s = type_to_str(u);
+        REPORT_ERROR_LOC(rc, DIAG_SEMA_TYPES, cond->loc, "condition must be 'bool', got '" SV_FMT "'.", SV_ARG(s));
+        string_destroy(&s);
+        return false;
+    }
+    return true;
+}
+
+typedef struct SemaCtx SemaCtx;
+
+struct SemaCtx {
+    ReportCollector* rc;
+    TypeSystem* ts;
+    Scope* scope;             // current scope while walking
+    const Type* current_ret_type;  // function return type when inside a function
+    bool status;
+};
+
+static inline bool source_file_sema_validate_assignment(ASTNode* bin_expr, SemaCtx* ctx) {
+    assert(bin_expr != NULL && ctx != NULL);
+    assert(bin_expr->kind == AST_NODE_EXPR_BINARY);
+
+    const TokenKind op = bin_expr->as.expr_binary.op;
+    if (!source_file_sema_is_assign_token(op)) {
+        return true; // not an assignment, nothing to validate here
+    }
+
+    ASTNode* L = bin_expr->as.expr_binary.lhs;
+    ASTNode* R = bin_expr->as.expr_binary.rhs;
+    assert(L != NULL && R != NULL);
+
+    if (!source_file_sema_is_lvalue_expr(L)) {
+        REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_TYPES, L->loc, "left-hand side of assignment is not assignable.");
+        ctx->status = false;
+        return false;
+    }
+
+    Type* lt = typecheck_resolve_expr_type(ctx->scope, L, ctx->ts, ctx->rc);
+    Type* rt = typecheck_resolve_expr_type(ctx->scope, R, ctx->ts, ctx->rc);
+
+    if (lt == NULL || rt == NULL) {
+        ctx->status = false;
+        return false;
+    }
+
+    const Type* l = type_unwrap(lt);
+    const Type* r = type_unwrap(rt);
+
+    // for compound assignments, require integer arithmetic for now
+    if (source_file_sema_is_compound_assign(op)) {
+        if (!is_type_integer(l) || !is_type_integer(r)) {
+            String ls = type_to_str(l), rs = type_to_str(r);
+            REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_TYPES, bin_expr->loc, "compound assignment requires integers, got '" SV_FMT "' and '" SV_FMT "'.", SV_ARG(ls), SV_ARG(rs));
+            string_destroy(&ls);
+            string_destroy(&rs);
+            ctx->status = false;
+            return false;
+        }
+    }
+
+    // basic assignability (arrays must match exact size
+    if (!is_type_compatible(l, r)) {
+        String ls = type_to_str(l), rs = type_to_str(r);
+        REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_TYPES, bin_expr->loc, "cannot assign '" SV_FMT "' to '" SV_FMT "'.", SV_ARG(rs), SV_ARG(ls));
+        string_destroy(&ls);
+        string_destroy(&rs);
+        ctx->status = false;
+        return false;
+    }
+
+    return true;
+}
+
+static inline bool source_file_sema_validate_return(ASTNode* ret_stmt, SemaCtx* ctx) {
+    assert(ret_stmt != NULL && ctx != NULL);
+
+    // returning outside of a function; report a sensible error
+    if (ctx->current_ret_type == NULL) {
+        REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_TYPES, ret_stmt->loc, "return statement is not inside a function.");
+        ctx->status = false;
+        return false;
+    }
+
+    ASTNode* value = ret_stmt->as.stmt_return.expr;
+    const Type* expected = type_unwrap(ctx->current_ret_type);
+
+    // returning from a void function
+    if (value == NULL) {
+        if (!is_type_builtin(expected, TYPE_BUILTIN_VOID) && !is_type_any(expected)) {
+            String es = type_to_str(expected);
+            REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_TYPES, ret_stmt->loc, "returning no value from function returning '" SV_FMT "'.", SV_ARG(es));
+            string_destroy(&es);
+            ctx->status = false;
+            return false;
+        }
+        return true;
+    }
+
+    // value return
+    Type* vt = typecheck_resolve_expr_type(ctx->scope, value, ctx->ts, ctx->rc);
+    if (vt == NULL) {
+        ctx->status = false;
+        return false;
+    }
+
+    const Type* v = type_unwrap(vt);
+
+    if (!is_type_compatible(expected, v)) {
+        String es = type_to_str(expected), vs = type_to_str(v);
+        REPORT_ERROR_LOC(ctx->rc, DIAG_SEMA_TYPES, value->loc, "returned type '" SV_FMT "' is not compatible with function return type '" SV_FMT "'.", SV_ARG(vs), SV_ARG(es));
+        string_destroy(&es);
+        string_destroy(&vs);
+        ctx->status = false;
+        return false;
+    }
+
+    return true;
+}
+
+static inline void source_file_validate_semantic_pre(ASTNode* parent, ASTNode* node, void* data) {
+    (void)parent;
+
+    SemaCtx* ctx = (SemaCtx*)data;
+    assert(ctx != NULL);
+
+    switch (node->kind) {
+    case AST_NODE_FUN_DECL: {
+        // enter function scope and capture return type
+        assert(node->symbol != NULL);
+        if (!symbol_resolve_type(node->symbol, ctx->ts, ctx->rc)) {
+            ctx->status = false;
+        }
+
+        const Type* fnty = type_unwrap(node->symbol->as.typed.type);
+        const Type* ret = NULL;
+        if (fnty != NULL && fnty->kind == TYPE_FUNCTION) {
+            ret = fnty->as.fun.ret;
+        }
+
+        // Push scope
+        assert(node->scope != NULL);
+        ctx->scope = node->scope;
+        ctx->current_ret_type = ret;
+    } break;
+
+    case AST_NODE_STMT_BLOCK: {
+        assert(node->scope != NULL);
+        ctx->scope = node->scope;
+    } break;
+
+    case AST_NODE_STMT_EXPR: {
+        // if it's an assignment binary, validate
+        ASTNode* e = node->as.stmt_expr.expr; // adjust if field differs
+        if (e != NULL && e->kind == AST_NODE_EXPR_BINARY) {
+            if (source_file_sema_is_assign_token(e->as.expr_binary.op)) {
+                source_file_sema_validate_assignment(e, ctx);
+            }
+        }
+    } break;
+
+    case AST_NODE_STMT_RETURN: {
+        source_file_sema_validate_return(node, ctx);
+    } break;
+
+    case AST_NODE_STMT_BRANCH: {
+        ASTNode* cond = node->as.stmt_branch.expr;
+        if (cond != NULL) {
+            source_file_sema_check_condition_is_bool(cond, ctx->scope, ctx->ts, ctx->rc);
+        }
+
+        assert(node->scope != NULL);
+        ctx->scope = node->scope;
+    } break;
+
+    case AST_NODE_STMT_WHILE: {
+        ASTNode* cond = node->as.stmt_while.expr;
+        if (cond != NULL) {
+            source_file_sema_check_condition_is_bool(cond, ctx->scope, ctx->ts, ctx->rc);
+        }
+
+        assert(node->scope != NULL);
+        ctx->scope = node->scope;
+    } break;
+
+    case AST_NODE_STMT_DO: {
+        ASTNode* cond = node->as.stmt_do.expr;
+        if (cond != NULL) {
+            source_file_sema_check_condition_is_bool(cond, ctx->scope, ctx->ts, ctx->rc);
+        }
+
+        assert(node->scope != NULL);
+        ctx->scope = node->scope;
+    } break;
+
+    default: break;
+    }
+}
+
+static inline void source_file_validate_semantic_post(ASTNode* parent, ASTNode* node, void* data) {
+    (void)parent;
+    SemaCtx* ctx = (SemaCtx*)data;
+    assert(ctx != NULL);
+
+    switch (node->kind) {
+    case AST_NODE_FUN_DECL: {
+        // Leave function scope
+        assert(ctx->scope != NULL && ctx->scope->parent != NULL);
+        ctx->scope = ctx->scope->parent;
+        ctx->current_ret_type = NULL;
+    } break;
+
+    case AST_NODE_STMT_BLOCK:
+    case AST_NODE_STMT_BRANCH:
+    case AST_NODE_STMT_WHILE:
+    case AST_NODE_STMT_DO: {
+        assert(ctx->scope != NULL && ctx->scope->parent != NULL);
+        ctx->scope = ctx->scope->parent;
+    } break;
+
+    default: break;
+    }
+}
+
 SourceFile* source_file_create(StringView path, ReportCollector* rc) {
     assert(rc != NULL);
 
@@ -624,8 +894,8 @@ bool source_file_parse_ast(SourceFile* source_file) {
     return is_good;
 }
 
-bool source_file_resolve_imports(SourceFile* source_file, struct Compiler* compiler) {
-    assert(source_file != NULL && compiler != NULL);
+bool source_file_resolve_imports(SourceFile* source_file) {
+    assert(source_file != NULL);
 
     if (source_file->imports_resolved) {
         REPORT_DEBUG(source_file->rc, DIAG_DRIVER_IMPORTS, "imports already resolved for '"SV_FMT"'.", SV_ARG(source_file->path));
@@ -638,20 +908,16 @@ bool source_file_resolve_imports(SourceFile* source_file, struct Compiler* compi
         ImportEntry* e = vector_at(source_file->imports, i);
 
         // resolve target package
-        e->target = compiler_resolve_import(compiler, source_file, e);
+        e->target = compiler_resolve_import(source_file->package->compiler, source_file, e);
         if (e->target == NULL) {
-            REPORT_ERROR_LOC(source_file->rc, DIAG_DRIVER_IMPORTS, e->node->loc, "failed to resolve import '"SV_FMT"'.",
-                SV_ARG(e->package_path)
-            );
+            REPORT_ERROR_LOC(source_file->rc, DIAG_DRIVER_IMPORTS, e->node->loc, "failed to resolve import '"SV_FMT"'.", SV_ARG(e->package_path));
             is_good = false;
             continue;
         }
 
         // compute visible name (alias or stem)
         e->name = source_file_derive_import_name(e);
-        REPORT_DEBUG(source_file->rc, DIAG_DRIVER_IMPORTS, "import '"SV_FMT"': base=%d, name='"SV_FMT"'",
-            SV_ARG(e->package_path), (i32)e->base, SV_ARG(e->name)
-        );
+        REPORT_DEBUG(source_file->rc, DIAG_DRIVER_IMPORTS, "import '"SV_FMT"': base=%d, name='"SV_FMT"'", SV_ARG(e->package_path), (i32)e->base, SV_ARG(e->name));
     }
 
     source_file->imports_resolved = true;
@@ -720,6 +986,35 @@ bool source_file_bind_symbols(SourceFile* source_file) {
         .data = &ctx,
         .pre_fn = &source_file_bind_symbols_pre_fn,
         .post_fn = &source_file_bind_symbols_post_fn,
+    };
+
+    const Vector* nodes = &source_file->ast->as.source_file.entities;
+    for (u32 i = 0; i < nodes->size; ++i) {
+        ASTNode* node = vector_at(*nodes, i);
+        ast_visit_with(NULL, node, &v);
+    }
+
+    return ctx.status;
+}
+
+bool source_file_validate_semantics(SourceFile* source_file) {
+    assert(source_file != NULL);
+    assert(source_file->scope != NULL);
+    assert(source_file->ast != NULL);
+
+
+    SemaCtx ctx = {
+        .rc = source_file->rc,
+        .ts = &source_file->package->compiler->ts,
+        .scope = source_file->scope,
+        .current_ret_type = NULL,
+        .status = true,
+    };
+
+    ASTVisitor v = {
+        .data = &ctx,
+        .pre_fn = &source_file_validate_semantic_pre,
+        .post_fn = &source_file_validate_semantic_post,
     };
 
     const Vector* nodes = &source_file->ast->as.source_file.entities;

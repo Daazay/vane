@@ -431,3 +431,115 @@ bool is_type_compatible(const Type* to, const Type* from) {
     // exact match otherwise
     return type_eq_type(to, from);
 }
+
+bool is_type_array_compatible(const Type* lhs, const Type* rhs) {
+    if (lhs == NULL || rhs == NULL) {
+        return false;
+    }
+
+    lhs = type_unwrap(lhs);
+    rhs = type_unwrap(rhs);
+
+    if (lhs->kind != TYPE_ARRAY || rhs->kind != TYPE_ARRAY) {
+        return false;
+    }
+
+    return is_type_compatible(lhs->as.array.elem, rhs->as.array.elem) && (lhs->as.array.size == rhs->as.array.size);
+}
+
+bool is_type_slice_compatible(const Type* lhs, const Type* rhs) {
+    if (lhs == NULL || rhs == NULL) {
+        return false;
+    }
+
+    lhs = type_unwrap(lhs);
+    rhs = type_unwrap(rhs);
+
+    if (lhs->kind != TYPE_SLICE || rhs->kind != TYPE_SLICE) {
+        return false;
+    }
+
+    return is_type_compatible(lhs->as.slice.elem, rhs->as.slice.elem);
+}
+
+bool is_type_array_to_slice_ok(const Type* lhs, const Type* rhs) {
+    if (lhs == NULL || rhs == NULL) {
+        return false;
+    }
+
+    lhs = type_unwrap(lhs);
+    rhs = type_unwrap(rhs);
+
+    if (lhs->kind != TYPE_SLICE || rhs->kind != TYPE_ARRAY) {
+        return false;
+    }
+
+    return is_type_compatible(lhs->as.slice.elem, rhs->as.array.elem);
+}
+
+bool is_type_basic_assignable(const Type* lhs, const Type* rhs) {
+    if (lhs == NULL || rhs == NULL) {
+        return false;
+    }
+
+    lhs = type_unwrap(lhs);
+    rhs = type_unwrap(rhs);
+
+    if (lhs == rhs) {
+        return true;
+    }
+
+    if (type_eq_type(lhs, rhs)) {
+        return true;
+    }
+
+    if (is_type_any(lhs) || is_type_any(rhs)) {
+        return true;
+    }
+
+    if (is_type_integer(lhs) && is_type_integer(rhs)) {
+        return true;
+    }
+    if (is_type_bool(lhs) && is_type_bool(rhs)) {
+        return true;
+    }
+
+    if (lhs->kind == TYPE_POINTER && rhs->kind == TYPE_POINTER) {
+        return type_eq_type(lhs->as.pointer.base, rhs->as.pointer.base);
+    }
+
+    return false;
+}
+
+bool is_type_assignable(const Type* lhs, const Type* rhs) {
+    if (lhs == NULL || rhs == NULL) {
+        return true;
+    }
+
+    if (lhs == rhs) {
+        return true;
+    }
+    if (type_eq_type(lhs, rhs)) {
+        return true;
+    }
+
+    /* General/basic rules */
+    if (is_type_basic_assignable(lhs, rhs)) {
+        return true;
+    }
+
+    /* Containers */
+    if (is_type_array_compatible(lhs, rhs)) {
+        return true;
+    }
+    if (is_type_slice_compatible(lhs, rhs)) {
+        return true;
+    }
+
+    /* Optional implicit array -> slice decay */
+    if (is_type_array_to_slice_ok(lhs, rhs)) {
+        return true;
+    }
+
+    return false;
+}

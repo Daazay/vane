@@ -22,6 +22,7 @@ enum CompilerPipelineStage {
     COMPILER_PIPE_RESOLVE_SYMBOLS,
     COMPILER_PIPE_BIND_SYMBOLS,
     COMPILER_PIPE_RESOLVE_TYPES,
+    COMPILER_PIPE_VALIDATE_SEMANTIC,
     COMPILER_PIPE_BUILD_CFGS,
     COMPILER_PIPE_BUILD,
 };
@@ -304,6 +305,9 @@ static inline bool compiler_run_upto(Compiler* compiler, CompilerPipelineStage s
 
     if (!compiler_resolve_types(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_TYPES) return !compiler_should_halt(compiler);
+
+    if (!compiler_validate_semantics(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_VALIDATE_SEMANTIC) return !compiler_should_halt(compiler);
 
     if (!compiler_build_cfgs(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_BUILD_CFGS) return !compiler_should_halt(compiler);
@@ -929,7 +933,7 @@ static inline bool compiler_drain_resolve_queue(Compiler* compiler, Vector* reso
             continue;
         }
 
-        if (!source_file_resolve_imports(source_file, compiler)) {
+        if (!source_file_resolve_imports(source_file)) {
             is_good = false;
         }
 
@@ -1055,6 +1059,23 @@ bool compiler_resolve_types(Compiler* compiler) {
             continue;
         }
         if (!scope_resolve_types(package->scope, &compiler->ts, &compiler->rc)) {
+            status = false;
+        }
+    }
+
+    return status;
+}
+
+bool compiler_validate_semantics(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    bool status = true;
+    HashmapIterator it = hashmap_get_it(&compiler->packages);
+    Package* package = NULL;
+
+    while (hashmap_it_next(&it, NULL, &package)) {
+        if (package == NULL) continue;
+        if (!package_validate_semantics(package)) {
             status = false;
         }
     }

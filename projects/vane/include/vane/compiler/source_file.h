@@ -65,10 +65,12 @@ void source_file_destroy(SourceFile* source_file);
 
 bool source_file_parse_ast(SourceFile* source_file);
 
-bool source_file_resolve_imports(SourceFile* source_file, struct Compiler* compiler);
+bool source_file_resolve_imports(SourceFile* source_file);
 
 bool source_file_resolve_symbol_decls(SourceFile* source_file);
 
 bool source_file_bind_symbols(SourceFile* source_file);
+
+bool source_file_validate_semantics(SourceFile* source_file);
 
 bool source_file_build_cfgs(SourceFile* source_file);

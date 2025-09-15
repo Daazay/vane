@@ -6,6 +6,9 @@
 #include "vane/utils/vector.h"
 
 struct TypeSystem;
+struct ASTNode;
+struct Scope;
+struct ReportCollector;
 
 typedef enum TypeResolveState TypeResolveState;
 typedef enum TypeKind TypeKind;
@@ -132,3 +135,13 @@ bool is_type_sized_integer(const Type* type, TypeBuiltinKind* out);
 bool is_type_integer(const Type* type);
 
 bool is_type_compatible(const Type* to, const Type* from);
+
+bool is_type_array_compatible(const Type* lhs, const Type* rhs);
+
+bool is_type_slice_compatible(const Type* lhs, const Type* rhs);
+
+bool is_type_array_to_slice_ok(const Type* lhs, const Type* rhs);
+
+bool is_type_basic_assignable(const Type* lhs, const Type* rhs);
+
+bool is_type_assignable(const Type* lhs, const Type* rhs);

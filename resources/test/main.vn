@@ -1,5 +1,19 @@
-fun test()
-    if true then
-    else if true then
-    end
+﻿fun test()
+     var a: []int
+     var b: [32]int
+     var c: [64]int
+     var d: string
+     var f = "some string"
+
+     a = a
+     a = b
+     a = c
+
+     b = a
+     b = b
+     b = c
+
+     c = a
+     c = b
+     c = c
 end

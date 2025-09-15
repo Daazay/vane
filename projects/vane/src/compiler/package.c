@@ -114,6 +114,19 @@ bool package_bind_symbols(Package* package) {
     return is_good;
 }
 
+bool package_validate_semantics(Package* package) {
+    assert(package != NULL);
+    bool is_good = true;
+
+    for (u32 i = 0; i < package->source_files.size; ++i) {
+        SourceFile* sf = vector_at(package->source_files, i);
+        if (!source_file_validate_semantics(sf)) {
+            is_good = false;
+        }
+    }
+    return is_good;
+}
+
 bool package_build_cfg(Package* package) {
     assert(package != NULL);
 

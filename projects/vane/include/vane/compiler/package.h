@@ -43,4 +43,6 @@ bool package_resolve_symbol_decls(Package* package, Scope* global_scope);
 
 bool package_bind_symbols(Package* package);
 
+bool package_validate_semantics(Package* package);
+
 bool package_build_cfg(Package* package);
