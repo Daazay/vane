@@ -7,6 +7,8 @@
 #include "vane/utils/string_builder.h"
 #include "vane/utils/env.h"
 
+#include "vane/ast/ast_visitor.h"
+
 #include "vane/dump/ast_dump.h"
 #include "vane/dump/scope_dump.h"
 #include "vane/dump/types_dump.h"
@@ -23,6 +25,7 @@ enum CompilerPipelineStage {
     COMPILER_PIPE_RESOLVE_SYMBOLS,
     COMPILER_PIPE_BIND_SYMBOLS,
     COMPILER_PIPE_RESOLVE_TYPES,
+    COMPILER_PIPE_BUILD_FUN_TYPE_INDEX,
     COMPILER_PIPE_RESOLVE_ENTRY,
     COMPILER_PIPE_VALIDATE_SEMANTIC,
     COMPILER_PIPE_BUILD_CALL_GRAPH,
@@ -178,9 +181,9 @@ static inline void compiler_emit_requested(const Compiler* compiler) {
 static inline StringView compiler_resolve_vane_root(Compiler* compiler) {
     assert(compiler != NULL && compiler->build_options != NULL);
 
-    // CLI override: --collection vane_root=<path>
+    // CLI override: --collection vane-root=<path>
     {
-        StringView key = STR_LIT("vane_root");
+        StringView key = STR_LIT("vane-root");
         StringView sv = compiler_get_collection_path(compiler, key);
 
         if (!is_string_view_empty(sv)) {
@@ -315,6 +318,9 @@ static inline bool compiler_run_upto(Compiler* compiler, CompilerPipelineStage s
     if (!compiler_resolve_types(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_TYPES) return !compiler_should_halt(compiler);
 
+    if (!compiler_build_fun_type_index(compiler)) return false;
+    if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_BUILD_FUN_TYPE_INDEX) return !compiler_should_halt(compiler);
+
     if (!compiler_resolve_entry_point(compiler)) return false;
     if (compiler_should_halt(compiler) || stage == COMPILER_PIPE_RESOLVE_ENTRY) return !compiler_should_halt(compiler);
 
@@ -351,6 +357,8 @@ Compiler compiler_create(BuildOptions* build_options) {
         VECTOR_SPECS(SourceFile*, NULL)
     );
 
+    compiler.fun_by_type_hash   = (Hashmap) { 0 };
+
     compiler.entry_point = NULL;
     compiler.global_scope = scope_create(SCOPE_GLOBAL, NULL, NULL, NULL);
 
@@ -370,11 +378,13 @@ void compiler_destroy(Compiler* compiler) {
 
     hashmap_destroy(&compiler->packages);
     hashmap_destroy(&compiler->source_files);
+    hashmap_destroy(&compiler->fun_by_type_hash);
     vector_destroy(&compiler->source_files_queue);
 
     scope_destroy(compiler->global_scope);
 
     call_graph_destroy(compiler->call_graph);
+
 
     type_system_destroy(&compiler->ts);
     report_collector_destroy(&compiler->rc);
@@ -1178,6 +1188,101 @@ static inline bool compiler_is_entry_signature_ok(StringView entry_name, const S
         string_destroy(&got_sig);
         return false;
     }
+    return true;
+}
+
+static inline void compiler_init_fun_type_index(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    compiler->fun_by_type_hash = hashmap_create(32,
+        HASHMAP_KEY_SPECS(u32, &item_u32_hash, &item_u32_eq, NULL),
+        HASHMAP_VALUE_SPECS(Vector, &vector_destroy)
+    );
+}
+
+static inline void compiler_clear_fun_type_index(Compiler* compiler) {
+    assert(compiler != NULL);
+    hashmap_clear(&compiler->fun_by_type_hash);
+}
+
+typedef struct FunTypeIdxCtx FunTypeIdxCtx;
+
+struct FunTypeIdxCtx {
+    Compiler* compiler;
+    Package*  package;
+};
+
+static inline void compiler_fun_type_index_pre(ASTNode* parent, ASTNode* node, void* data) {
+    (void)parent;
+
+    FunTypeIdxCtx* ctx = (FunTypeIdxCtx*)data;
+    assert(ctx != NULL);
+
+    if (node->kind != AST_NODE_FUN_DECL || node->symbol == NULL) {
+        return;
+    }
+
+    Symbol* f = node->symbol;
+    if (f->kind != SYMBOL_FUNCTION) {
+        return;
+    }
+
+    // ensure function type is resolved.
+    if (!symbol_resolve_type(f, &ctx->compiler->ts, &ctx->compiler->rc) || f->as.typed.type == NULL) {
+        return;
+    }
+
+    const Type* T = f->as.typed.type;
+    const u32 h   = type_get_hash(T);
+
+    Vector* bucket = hashmap_get(&ctx->compiler->fun_by_type_hash, &h);
+    if (bucket == NULL) {
+        Vector new_bucket = vector_create(4, VECTOR_SPECS(Symbol*, NULL));
+        hashmap_insert(&ctx->compiler->fun_by_type_hash, &h, &new_bucket);
+        bucket = hashmap_get(&ctx->compiler->fun_by_type_hash, &h);
+    }
+
+    vector_push_back(bucket, &f);
+}
+
+bool compiler_build_fun_type_index(Compiler* compiler) {
+    assert(compiler != NULL);
+
+    compiler_clear_fun_type_index(compiler);
+    compiler_init_fun_type_index(compiler);
+
+    FunTypeIdxCtx ctx = {
+        .compiler = compiler,
+        .package = NULL,
+    };
+
+    ASTVisitor v = {
+        .data    = &ctx,
+        .pre_fn  = &compiler_fun_type_index_pre,
+        .post_fn = NULL,
+    };
+
+    HashmapIterator it = hashmap_get_it(&compiler->packages);
+    Package* package = NULL;
+
+    while (hashmap_it_next(&it, NULL, &package)) {
+        if (package == NULL) {
+            continue;
+        }
+
+        ctx.package = package;
+
+        for (u32 i = 0; i < package->source_files.size; ++i) {
+            SourceFile* source_file = vector_at(package->source_files, i);
+
+            const Vector* ents = &source_file->ast->as.source_file.entities;
+            for (u32 k = 0; k < ents->size; ++k) {
+                ASTNode* n = vector_at(*ents, k);
+                ast_visit_with(NULL, n, &v);
+            }
+        }
+    }
+
     return true;
 }
 

@@ -37,6 +37,14 @@ struct HashItemSpecs {
     ItemEqualsFn equals_fn;
 };
 
+static inline u32 item_u32_hash(const void* ptr) {
+    return *((const u32*)ptr);
+}
+
+static inline bool item_u32_eq(const void* ptr1, const void* ptr2) {
+    return *((const u32*)ptr1) == *((const u32*)ptr2);
+}
+
 static inline u32 item_ptr_hash(const void* ptr) {
     union { const void* p; u64 u; } cvt;
     cvt.u = 0;

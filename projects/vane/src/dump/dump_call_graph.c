@@ -17,7 +17,9 @@ void dump_call_graph_txt(FileWriter* w, const CallGraph* graph) {
             ? node->symbol->name
             : STR_LIT("<synthetic>");
 
-        file_writer_write_format(w, "  "SV_FMT":\n", SV_ARG(name));
+        file_writer_write_format(w, "  "SV_FMT": @"SV_FMT":%u:%u\n", SV_ARG(name),
+            SV_ARG(node->symbol->ast->loc.path), node->symbol->ast->loc.begin.line, node->symbol->ast->loc.begin.column
+        );
 
         for (u32 k = 0; k < node->out.size; ++k) {
             const CallEdge* edge = vector_at(node->out, k);
@@ -26,7 +28,7 @@ void dump_call_graph_txt(FileWriter* w, const CallGraph* graph) {
                 ? edge->to->symbol->name
                 : STR_LIT("<unknown>");
 
-            file_writer_write_format(w, "    -> "SV_FMT"  [%s]  @"SV_FMT"%u:%u\n",
+            file_writer_write_format(w, "    -> "SV_FMT"  [%s]  @"SV_FMT":%u:%u\n",
                 SV_ARG(to_name), call_kind_get_name(edge->kind),
                 SV_ARG(edge->ast->loc.path), edge->ast->loc.begin.line, edge->ast->loc.begin.column
             );

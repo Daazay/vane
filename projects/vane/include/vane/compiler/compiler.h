@@ -46,6 +46,11 @@ struct Compiler {
 
     CallGraph* call_graph;
 
+    // used for call graph
+    // k: [u32, NULL]
+    // v: [Vector<Symbol*>, NULL]
+    Hashmap fun_by_type_hash;
+
     TypeSystem ts;
 };
 
@@ -90,6 +95,8 @@ bool compiler_resolve_symbol_decls(Compiler* compiler);
 bool compiler_bind_symbols(Compiler* compiler);
 
 bool compiler_resolve_types(Compiler* compiler);
+
+bool compiler_build_fun_type_index(Compiler* compiler);
 
 bool compiler_resolve_entry_point(Compiler* compiler);
 

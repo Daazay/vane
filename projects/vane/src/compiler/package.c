@@ -5,6 +5,7 @@
 #include "vane/compiler/compiler.h"
 #include "vane/ast/ast_visitor.h"
 #include "vane/sema/typecheck.h"
+#include "vane/utils/hash.h"
 
 Package* package_create(StringView path, struct Compiler* compiler) {
     Package* package = malloc(sizeof(Package));
@@ -134,12 +135,11 @@ bool package_validate_semantics(Package* package) {
 typedef struct CallGraphBuildCtx CallGraphBuildCtx;
 
 struct CallGraphBuildCtx {
-    CallGraph* graph;
-    Package* package;
-    Symbol* current_fun;
-    Scope* scope;
-    TypeSystem* ts;
-    ReportCollector* rc;
+    CallGraph*       graph;
+    Package*         package;
+    Compiler*        compiler;
+    Symbol*          current_fun;
+    Scope*           scope;
 };
 
 static inline void call_graph_build_pre(ASTNode* parent, ASTNode* node, void* data) {
@@ -169,40 +169,72 @@ static inline void call_graph_build_pre(ASTNode* parent, ASTNode* node, void* da
     }
 }
 
+static inline void call_graph_add_indirect_edges(CallGraphBuildCtx* ctx, const ASTNode* ast, const Type* fun_t) {
+    assert(ctx != NULL && ast != NULL && fun_t != NULL);
+
+    const u32 h = type_get_hash(fun_t);
+    Vector* bucket = hashmap_get(&ctx->compiler->fun_by_type_hash, &h);
+
+    if (bucket == NULL) {
+        // no known candidates globally -> single unknown-indirect edge
+        call_graph_add_edge(ctx->graph, ctx->current_fun, NULL, CALL_INDIRECT_LOCAL, ast);
+        return;
+    }
+
+    // expand to all candidates with exact type match (guard against hash collisions)
+    for (u32 i = 0; i < bucket->size; ++i) {
+        Symbol* cand = vector_at(*bucket, i); // bucket holds Symbol*
+        if (cand == NULL || cand->kind != SYMBOL_FUNCTION || cand->as.typed.type == NULL) {
+            continue;
+        }
+
+        if (!type_eq_type(fun_t, cand->as.typed.type)) {
+            continue;
+        }
+
+        const bool local = (cand->scope && cand->scope->package == ctx->package);
+        call_graph_add_edge(ctx->graph,
+            ctx->current_fun,
+            cand,
+            local ? CALL_INDIRECT_LOCAL : CALL_INDIRECT_EXTERNAL,
+            ast
+        );
+    }
+}
 static inline void call_graph_build_post(ASTNode* parent, ASTNode* node, void* data) {
     (void)parent;
 
     CallGraphBuildCtx* ctx = (CallGraphBuildCtx*)data;
     assert(ctx != NULL);
 
-    if (node->kind == AST_NODE_EXPR_CALL) {
-        if (ctx->current_fun == NULL) {
-            return;
-        }
-
+    if (node->kind == AST_NODE_EXPR_CALL && ctx->current_fun) {
         ASTNode* callee = node->as.expr_call.callee;
 
-        // 1) bound to a function symbol -> direct (local/external)
-        if (callee->symbol != NULL && callee->symbol->kind == SYMBOL_FUNCTION) {
-            CallKind kind = (callee->symbol->scope->package == ctx->package)
-                ? CALL_DIRECT_LOCAL
-                : CALL_DIRECT_EXTERNAL;
+        bool added_direct = false;
 
-            call_graph_add_edge(ctx->graph, ctx->current_fun, callee->symbol, kind, node);
+        // direct call via bound function symbol
+        if (callee->symbol && callee->symbol->kind == SYMBOL_FUNCTION) {
+            const bool local = (callee->symbol->scope && callee->symbol->scope->package == ctx->package);
+
+            call_graph_add_edge(ctx->graph,
+                ctx->current_fun,
+                callee->symbol,
+                local ? CALL_DIRECT_LOCAL : CALL_DIRECT_EXTERNAL,
+                node
+            );
+            added_direct = true;
         }
-        // 2) not a function symbol, check its type to see if its a function typed expression
-        else {
-            Type* t = typecheck_resolve_expr_type(ctx->scope, callee, ctx->ts, ctx->rc);
-            const Type* u = t != NULL ? type_unwrap(t) : NULL;
 
-            // indirect call: we don't know the precise callee symbol
-            if (u != NULL && u->kind == TYPE_FUNCTION) {
-                CallKind kind = CALL_INDIRECT_LOCAL;
-                call_graph_add_edge(ctx->graph, ctx->current_fun, NULL, kind, node);
+        // only if NOT direct: expand indirects via type
+        if (!added_direct) {
+            Type* t = typecheck_resolve_expr_type(ctx->scope, callee, &ctx->compiler->ts, &ctx->compiler->rc);
+            const Type* u = t ? type_unwrap(t) : NULL;
+            if (u && u->kind == TYPE_FUNCTION) {
+                call_graph_add_indirect_edges(ctx, node, u);
             }
+            // else: not callable -> no edge
         }
     }
-
     switch (node->kind) {
     case AST_NODE_FUN_DECL:
     case AST_NODE_STMT_BLOCK:
@@ -216,6 +248,7 @@ static inline void call_graph_build_post(ASTNode* parent, ASTNode* node, void* d
             ctx->current_fun = NULL;
         }
         break;
+
     default: break;
     }
 }
@@ -230,11 +263,10 @@ bool package_build_call_graph(struct Package* package) {
     CallGraph* graph = call_graph_create(package, &package->compiler->rc);
     CallGraphBuildCtx ctx = {
         .graph = graph,
+        .compiler = package->compiler,
         .package = package,
         .current_fun = NULL,
         .scope = package->scope,
-        .ts = &package->compiler->ts,
-        .rc = &package->compiler->rc,
     };
 
     ASTVisitor v = {
