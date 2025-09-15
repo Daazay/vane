@@ -47,7 +47,7 @@ struct CFGBlock {
 
 const char* cfg_block_kind_get_name(CFGBlockKind k);
 
-const char* cfg_edge_kind_get_label(CFGEdgeKind k);
+const char* cfg_edge_kind_get_name(CFGEdgeKind k);
 
 CFGBlock* cfg_block_create(u32 id, CFGBlockKind kind);
 

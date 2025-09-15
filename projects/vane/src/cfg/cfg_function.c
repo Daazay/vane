@@ -79,9 +79,12 @@ static inline void cfg_builder_build_condition(CFGBuildCtx* ctx, const ASTNode* 
     assert(branches->size > 0 && "empty condition: no branches provided");
 
     CFGBlock* merge = cfg_builder_create_block(ctx, CFG_BLOCK_MERGE);
-
     // where jump if branch condition expr is false
     CFGBlock* chain_entry = cfg_builder_ensure_curr(ctx);
+
+    // we connect test(false) later, directly to the next test / else / merges
+    CFGBlock* last_test = NULL;
+    bool saw_else = false;
 
     for (u32 i = 0; i < branches->size; ++i) {
         const ASTNode* br = vector_at(*branches, i);
@@ -90,23 +93,29 @@ static inline void cfg_builder_build_condition(CFGBuildCtx* ctx, const ASTNode* 
         if (br->as.stmt_branch.expr == NULL) {
             assert(i + 1 == branches->size && "invalid condition: 'else' branch must be last");
 
-            // connect previous false path to else
             CFGBlock* else_body = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
-            cfg_block_add_edge(chain_entry, CFG_EDGE_FALLTHROUGH, else_body);
 
-            // build else body
+            // false from the last test drops into else directly
+            if (last_test != NULL) {
+               cfg_block_add_edge(last_test, CFG_EDGE_FALSE, else_body);
+            }
+            // defensive: no tests created
+            else {
+                cfg_block_add_edge(chain_entry, CFG_EDGE_FALLTHROUGH, else_body);
+            }
+
             CFGBlock* saved_curr = ctx->curr;
             ctx->curr = else_body;
             cfg_builder_build_stmt_list(ctx, &br->as.stmt_branch.block);
 
-            // if body not terminated, connect to merge
             if (ctx->curr != NULL && ctx->curr->succ.size == 0) {
                 cfg_block_add_edge(ctx->curr, CFG_EDGE_FALLTHROUGH, merge);
             }
 
             ctx->curr = saved_curr;
-            // chain ends at else
-            chain_entry = NULL;
+
+            saw_else = true;
+            last_test = NULL;
             break;
         }
 
@@ -114,38 +123,46 @@ static inline void cfg_builder_build_condition(CFGBuildCtx* ctx, const ASTNode* 
         CFGBlock* test = cfg_builder_create_block(ctx, CFG_BLOCK_COND_EXPR);
         cfg_block_add_stmt(test, br->as.stmt_branch.expr);
 
-        // wire previous false path to this test
-        cfg_block_add_edge(chain_entry, CFG_EDGE_FALLTHROUGH, test);
+        // previous test's FALSS flows directly into this test
+        if (last_test != NULL) {
+            cfg_block_add_edge(last_test, CFG_EDGE_FALSE, test);
+        }
+        // first test: chain_entry -> test
+        else {
+            cfg_block_add_edge(chain_entry, CFG_EDGE_FALLTHROUGH, test);
+        }
 
-        // prepare body and next-chain (for test==false)
-        CFGBlock* body       = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
-        CFGBlock* next_chain = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
-
+        // TRUE -> body
+        CFGBlock* body = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
         cfg_block_add_edge(test, CFG_EDGE_TRUE, body);
-        cfg_block_add_edge(test, CFG_EDGE_FALSE, next_chain);
 
         // build body
         CFGBlock* saved_curr = ctx->curr;
         ctx->curr = body;
         cfg_builder_build_stmt_list(ctx, &br->as.stmt_branch.block);
-
-        // non-terminated body joins merge
         if (ctx->curr != NULL && ctx->curr->succ.size == 0) {
             cfg_block_add_edge(ctx->curr, CFG_EDGE_FALLTHROUGH, merge);
         }
         ctx->curr = saved_curr;
 
-        // next branch in chain evaluates from the 'false' side
-        chain_entry = next_chain;
+        // keep this test so its FALSE can be wired to the *next* test/else/merge
+        last_test = test;
     }
 
-    // no else: final false path goes to merge
-    if (chain_entry != NULL) {
-        cfg_block_add_edge(chain_entry, CFG_EDGE_FALLTHROUGH, merge);
+    // no else branch -> final test's FALSE goes to merge (no connector)
+    if (!saw_else) {
+        if (last_test != NULL) {
+            cfg_block_add_edge(last_test, CFG_EDGE_FALSE, merge);
+        }
+        else {
+            // degenerate case: no tests produced (malformed AST) � still wire something
+            cfg_block_add_edge(chain_entry, CFG_EDGE_FALLTHROUGH, merge);
+        }
     }
 
-    // continue after the whole if-chain
+    // continue after the whole chain at the merge block
     ctx->curr = merge;
+
 }
 
 static void cfg_builder_maybe_warn_unreachable(CFGBuildCtx* ctx, const ASTNode* ast) {
@@ -298,12 +315,11 @@ CFGFunction* cfg_function_build(const ASTNode* ast, ReportCollector* rc) {
     cfg->entry    = NULL;
     cfg->exit     = NULL;
 
-    CFGBuildCtx ctx = {
-        .cfg  = cfg,
-        .rc   = rc,
-        .curr = NULL,
-        .loop_targets = (Vector) { 0 },
-    };
+    CFGBuildCtx ctx = { 0 };
+    ctx.cfg          = cfg;
+    ctx.rc           = rc;
+    ctx.curr         = NULL;
+    ctx.loop_targets = (Vector) { 0 };
 
     //
     cfg->entry = cfg_builder_create_block(&ctx, CFG_BLOCK_ENTRY);

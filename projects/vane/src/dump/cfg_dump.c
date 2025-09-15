@@ -26,7 +26,7 @@ static inline void dump_cfg_dot_edges(FileWriter* w, const CFGBlock* block) {
     for (u32 i = 0; i < block->succ.size; ++i) {
         const CFGEdge* succ = vector_at(block->succ, i);
 
-        file_writer_write_format(w, "  bb%u -> bb%u;\n", (u64)(uptr_t)block->id, (u64)(uptr_t)succ->from->id);
+        file_writer_write_format(w, "  bb%u -> bb%u [label=\"%s\"];\n", (u64)(uptr_t)block->id, (u64)(uptr_t)succ->from->id, cfg_edge_kind_get_name(succ->kind));
     }
 }
 

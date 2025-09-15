@@ -16,7 +16,7 @@ const char* cfg_block_kind_get_name(CFGBlockKind kind) {
     }
 }
 
-const char* cfg_edge_kind_get_label(CFGEdgeKind kind) {
+const char* cfg_edge_kind_get_name(CFGEdgeKind kind) {
     switch (kind) {
     case CFG_EDGE_FALLTHROUGH: return "";
     case CFG_EDGE_TRUE:        return "T";

@@ -1,13 +1,5 @@
 fun test()
-    var i = 0;
     if true then
-        10
-    else if false then
-        ""
-        0x25
-    else
-        19
-        19
-        19
+    else if true then
     end
 end
