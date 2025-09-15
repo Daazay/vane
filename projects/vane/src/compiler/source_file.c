@@ -754,7 +754,7 @@ bool source_file_build_cfgs(SourceFile* source_file) {
             continue;
         }
 
-        CFGFunction* cfg = cfg_build_function(node, source_file->rc);
+        CFGFunction* cfg = cfg_function_build(node, source_file->rc);
         hashmap_insert(&source_file->cfg_by_fun, &node, &cfg);
 
         StringView fun_name = string_get_view(node->as.fun_decl.sign->as.fun_sign.id->as.id.value);

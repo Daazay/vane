@@ -1,6 +1,5 @@
 #
 /build/
-/dumps/
 
 # Visual Studio related
 .vs
@@ -11,3 +10,8 @@
 # Makefile
 Makefile
 *.make
+
+#
+*.cfg.dot
+*.ast.txt
+*.ast.dot

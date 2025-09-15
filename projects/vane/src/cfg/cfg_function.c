@@ -2,451 +2,326 @@
 
 #include <stdlib.h>
 
-#include "vane/ast/ast_node.h"
-#include "vane/diagnostic/report_collector.h"
-#include "vane/sema/scope.h"
+typedef struct CFGBuildCtx CFGBuildCtx;
+typedef struct LoopTargets LoopTargets;
 
-typedef struct CFGLoopAnchor CFGLoopAnchor;
-typedef struct CFGBuilder CFGBuilder;
-
-#define CFG_BUILDER_DEFAULT_LOOP_ANCHOR_COUNT 8
-#define CFG_FUNCTION_DEFAULT_BLOCKS_COUNT     4
-
-struct CFGLoopAnchor {
-    struct Scope* scope;
+struct LoopTargets {
     CFGBlock* break_target;
     CFGBlock* continue_target;
 };
 
-struct CFGBuilder {
-    Vector loop_anchors;
-    CFGFunction* cfg;
-    CFGBlock* curr;
+struct CFGBuildCtx {
     ReportCollector* rc;
-    bool reachable;
+    CFGFunction*     cfg;
+    CFGBlock*        curr;
+    Vector           loop_targets;
 };
 
-static inline CFGBuilder cfg_builder_create(CFGFunction* cfg, ReportCollector* rc) {
-    CFGBuilder builder = { 0 };
+static inline CFGBlock* cfg_builder_create_block(CFGBuildCtx* ctx, CFGBlockKind kind) {
+    assert(ctx != NULL && ctx->cfg != NULL);
 
-    builder.cfg = cfg;
-    builder.curr = NULL;
-    builder.loop_anchors = (Vector){ 0 };
-    builder.reachable = true;
-    builder.rc = rc;
+    CFGBlock* block = cfg_block_create(ctx->cfg->blocks.size, kind);
 
-    return builder;
-}
-
-static inline void cfg_builder_destroy(CFGBuilder* builder) {
-    if (builder == NULL) {
-        return;
+    if (ctx->cfg->blocks.raw == NULL) {
+        ctx->cfg->blocks = vector_create(4, VECTOR_SPECS(CFGBlock*, &cfg_block_destroy));
     }
-
-    vector_destroy(&builder->loop_anchors);
-}
-
-static inline CFGBlock* cfg_builder_create_basic(CFGBuilder* builder, const ASTNode* ast) {
-    assert(builder != NULL && ast != NULL);
-
-    CFGBlock* block = cfg_block_create(builder->cfg->blocks.size, CFG_BLOCK_BASIC, ast);
-    vector_push_back(&builder->cfg->blocks, &block);
+    vector_push_back(&ctx->cfg->blocks, &block);
     return block;
 }
 
-static inline CFGBlock* cfg_builder_create_branch(CFGBuilder* builder, const ASTNode* ast) {
-    assert(builder != NULL && ast != NULL);
-
-    CFGBlock* block = cfg_block_create(builder->cfg->blocks.size, CFG_BLOCK_BRANCH, ast);
-    vector_push_back(&builder->cfg->blocks, &block);
-    return block;
+static inline bool cfg_builder_is_terminator_stmt(const ASTNode* ast) {
+    assert(ast != NULL);
+    return ast->kind == AST_NODE_STMT_RETURN ||
+           ast->kind == AST_NODE_STMT_BREAK  ||
+           ast->kind == AST_NODE_STMT_CONTINUE;
 }
 
-static inline CFGBlock* cfg_builder_create_loop(CFGBuilder* builder, const ASTNode* ast) {
-    assert(builder != NULL && ast != NULL);
+static inline CFGBlock* cfg_builder_ensure_curr(CFGBuildCtx* ctx) {
+    assert(ctx != NULL);
 
-    CFGBlock* block = cfg_block_create(builder->cfg->blocks.size, CFG_BLOCK_LOOP, ast);
-    vector_push_back(&builder->cfg->blocks, &block);
-    return block;
+    // dead/unreachable new block; not connected unless caller connects
+    if (ctx->curr == NULL) {
+        ctx->curr = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
+    }
+    return ctx->curr;
 }
 
-static inline CFGBlock* cfg_builder_ensure_basic(CFGBuilder* builder, const ASTNode* ast) {
-    assert(builder != NULL);
+static inline void cfg_builder_push_loop_targets(CFGBuildCtx* ctx, CFGBlock* break_target, CFGBlock* continue_target) {
+    assert(ctx != NULL);
 
-    if (builder->curr != NULL && builder->curr->kind == CFG_BLOCK_BASIC) {
-        return builder->curr;
+    if (ctx->loop_targets.raw == NULL) {
+        ctx->loop_targets = vector_create(4, VECTOR_SPECS(LoopTargets, NULL));
     }
-
-    CFGBlock* block = cfg_builder_create_basic(builder, ast);
-    if (builder->reachable && builder->curr != NULL) {
-        cfg_block_add_edge(builder->curr, block);
-    }
-
-    builder->curr = block;
-    builder->reachable = true;
-
-    return block;
+    LoopTargets lt = { .break_target = break_target, .continue_target = continue_target, };
+    vector_push_back(&ctx->loop_targets, &lt);
 }
 
-static inline void cfg_builder_connect_to(CFGBuilder* builder, CFGBlock* target) {
-    assert(builder != NULL && target != NULL);
-
-    if (builder->reachable && builder->curr != NULL) {
-        cfg_block_add_edge(builder->curr, target);
-    }
+static inline void cfg_builder_pop_loop_targets(CFGBuildCtx* ctx) {
+    assert(ctx != NULL);
+    assert(ctx->loop_targets.size > 0);
+    vector_pop_back(&ctx->loop_targets);
 }
 
-static inline void cfg_builder_warn_unreachable_if_needed(CFGBuilder* builder, const ASTNode* anchor) {
-    assert(builder != NULL && anchor != NULL);
-
-    if (!builder->reachable) {
-        REPORT_WARNING_LOC(builder->rc, DIAG_SEMA_CFG, anchor->loc, "unreachable code: control does not flow here.");
+static inline LoopTargets* cfg_builder_get_last_loop_targets(CFGBuildCtx* ctx) {
+    assert(ctx != NULL);
+    if (ctx->loop_targets.size == 0) {
+        return NULL;
     }
+    return vector_at_back(ctx->loop_targets);
 }
 
-static inline void cfg_builder_push_loop(CFGBuilder* builder, Scope* scope, CFGBlock* break_target, CFGBlock* continue_target) {
-    assert(builder != NULL && break_target != NULL && continue_target != NULL);
-    assert(scope != NULL && scope->kind == SCOPE_LOOP);
+static inline void cfg_builder_build_stmt_list(CFGBuildCtx* ctx, const Vector* list);
 
-    if (builder->loop_anchors.raw == NULL) {
-        builder->loop_anchors = vector_create(
-            CFG_BUILDER_DEFAULT_LOOP_ANCHOR_COUNT,
-            VECTOR_SPECS(CFGLoopAnchor, NULL)
-        );
-    }
-
-    CFGLoopAnchor loop_anchor = { .scope = scope, .break_target = break_target, .continue_target = continue_target, };
-    vector_push_back(&builder->loop_anchors, &loop_anchor);
-}
-
-static inline void cfg_builder_pop_loop(CFGBuilder* builder, Scope* scope) {
-    assert(builder != NULL);
-    assert(scope != NULL && scope->kind == SCOPE_LOOP);
-
-    for (u32 i = 0; i < builder->loop_anchors.size; ++i) {
-        CFGLoopAnchor* loop_anchor = vector_at(builder->loop_anchors, i);
-
-        if (loop_anchor->scope == scope) {
-            vector_remove(&builder->loop_anchors, i);
-        }
-    }
-}
-
-static inline CFGLoopAnchor* cfg_builder_find_loop(CFGBuilder* builder, Scope* scope) {
-    assert(builder != NULL);
-    assert(scope != NULL && scope->kind == SCOPE_LOOP);
-
-    for (u32 i = 0; i < builder->loop_anchors.size; ++i) {
-        CFGLoopAnchor* loop_anchor = vector_at(builder->loop_anchors, i);
-
-        if (loop_anchor->scope == scope) {
-            return loop_anchor;
-        }
-    }
-
-    return NULL;
-}
-
-static inline void cfg_builder_build_stmt_list(CFGBuilder* builder, const Vector* list);
-
-static inline bool cfg_builder_build_one_branch(CFGBuilder* builder, ASTNode* ast, bool is_first, CFGBlock* merge, CFGBlock** incoming_false) {
-    assert(builder != NULL && merge != NULL);
-    assert(ast != NULL && ast->kind == AST_NODE_STMT_BRANCH);
-
-    ASTNode* expr = ast->as.stmt_branch.expr;
-    Vector* body  = &ast->as.stmt_branch.block;
-
-    if (expr != NULL) {
-        // if / else-if
-        CFGBlock* branch = cfg_builder_create_branch(builder, ast);
-
-        if (is_first) {
-            cfg_builder_connect_to(builder, branch);
-        }
-        else if (incoming_false != NULL && *incoming_false != NULL) {
-            cfg_builder_connect_to(builder, *incoming_false);
-        }
-
-        // true -> then
-        const ASTNode* then_anchor = (body->size > 0) ? vector_at_front(*body) : ast;
-        CFGBlock* then_block = cfg_builder_create_basic(builder, then_anchor);
-        cfg_block_add_edge(branch, then_block);
-
-        // build then-body
-        CFGBlock* saved_curr = builder->curr;
-
-        builder->curr = then_block;
-        builder->reachable = true;
-        cfg_builder_build_stmt_list(builder, body);
-
-        if (builder->reachable && builder->curr != NULL) {
-            cfg_block_add_edge(builder->curr, merge);
-        }
-
-        // false flows to next test
-        if (incoming_false != NULL) {
-            *incoming_false = branch;
-        }
-
-        // no linear fall-through from original context across a test
-        builder->curr = saved_curr;
-        builder->reachable = false;
-
-        return true;
-    }
-
-    // else - branch
-    const ASTNode* else_anchor = (body->size > 0) ? vector_at_front(*body) : ast;
-    CFGBlock* else_block = cfg_builder_create_basic(builder, else_anchor);
-
-    if (incoming_false != NULL && *incoming_false != NULL) {
-        cfg_block_add_edge(*incoming_false, else_block);
-        *incoming_false = NULL;
-    }
-    else {
-        cfg_builder_connect_to(builder, else_block);
-    }
-
-    CFGBlock* saved_curr = builder->curr;
-
-    builder->curr = else_block;
-    builder->reachable = true;
-    cfg_builder_build_stmt_list(builder, body);
-
-    if (builder->reachable && builder->curr != NULL) {
-        cfg_block_add_edge(builder->curr, merge);
-    }
-
-    builder->curr = saved_curr;
-    builder->reachable = false;
-
-    return true;
-}
-
-static inline void cfg_builder_build_condition(CFGBuilder* builder, const ASTNode* ast) {
-    assert(builder != NULL);
-    assert(ast != NULL && ast->kind == AST_NODE_STMT_CONDITION);
+static inline void cfg_builder_build_condition(CFGBuildCtx* ctx, const ASTNode* ast) {
+    assert(ctx != NULL && ast != NULL && ast->kind == AST_NODE_STMT_CONDITION);
 
     const Vector* branches = &ast->as.stmt_condition.branches;
+    assert(branches->size > 0 && "empty condition: no branches provided");
 
-    if (branches->size == 0) {
-        REPORT_NOTE_LOC(builder->rc, "cfg", ast->loc, "condition has no branches, nothing to emit.");
-        return;
-    }
+    CFGBlock* merge = cfg_builder_create_block(ctx, CFG_BLOCK_MERGE);
 
-    cfg_builder_warn_unreachable_if_needed(builder, ast);
-
-    CFGBlock* merge = cfg_builder_create_basic(builder, ast);
-    CFGBlock* incoming_false = NULL;
+    // where jump if branch condition expr is false
+    CFGBlock* chain_entry = cfg_builder_ensure_curr(ctx);
 
     for (u32 i = 0; i < branches->size; ++i) {
-        ASTNode* br = vector_at(*branches, i);
-        cfg_builder_build_one_branch(builder, br, (i == 0), merge, &incoming_false);
+        const ASTNode* br = vector_at(*branches, i);
+
+        // else-branch: expr == NULL
+        if (br->as.stmt_branch.expr == NULL) {
+            assert(i + 1 == branches->size && "invalid condition: 'else' branch must be last");
+
+            // connect previous false path to else
+            CFGBlock* else_body = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
+            cfg_block_add_edge(chain_entry, CFG_EDGE_FALLTHROUGH, else_body);
+
+            // build else body
+            CFGBlock* saved_curr = ctx->curr;
+            ctx->curr = else_body;
+            cfg_builder_build_stmt_list(ctx, &br->as.stmt_branch.block);
+
+            // if body not terminated, connect to merge
+            if (ctx->curr != NULL && ctx->curr->succ.size == 0) {
+                cfg_block_add_edge(ctx->curr, CFG_EDGE_FALLTHROUGH, merge);
+            }
+
+            ctx->curr = saved_curr;
+            // chain ends at else
+            chain_entry = NULL;
+            break;
+        }
+
+        // if / else-if condition expr
+        CFGBlock* test = cfg_builder_create_block(ctx, CFG_BLOCK_COND_EXPR);
+        cfg_block_add_stmt(test, br->as.stmt_branch.expr);
+
+        // wire previous false path to this test
+        cfg_block_add_edge(chain_entry, CFG_EDGE_FALLTHROUGH, test);
+
+        // prepare body and next-chain (for test==false)
+        CFGBlock* body       = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
+        CFGBlock* next_chain = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
+
+        cfg_block_add_edge(test, CFG_EDGE_TRUE, body);
+        cfg_block_add_edge(test, CFG_EDGE_FALSE, next_chain);
+
+        // build body
+        CFGBlock* saved_curr = ctx->curr;
+        ctx->curr = body;
+        cfg_builder_build_stmt_list(ctx, &br->as.stmt_branch.block);
+
+        // non-terminated body joins merge
+        if (ctx->curr != NULL && ctx->curr->succ.size == 0) {
+            cfg_block_add_edge(ctx->curr, CFG_EDGE_FALLTHROUGH, merge);
+        }
+        ctx->curr = saved_curr;
+
+        // next branch in chain evaluates from the 'false' side
+        chain_entry = next_chain;
     }
 
-    if (incoming_false != NULL) {
-        cfg_block_add_edge(incoming_false, merge);
+    // no else: final false path goes to merge
+    if (chain_entry != NULL) {
+        cfg_block_add_edge(chain_entry, CFG_EDGE_FALLTHROUGH, merge);
     }
 
-    builder->curr = merge;
-    builder->reachable = true;
+    // continue after the whole if-chain
+    ctx->curr = merge;
 }
 
-static inline void cfg_builder_build_while(CFGBuilder* builder, const ASTNode* ast) {
-    assert(builder != NULL);
-    assert(ast != NULL && ast->kind == AST_NODE_STMT_WHILE);
-
-    cfg_builder_warn_unreachable_if_needed(builder, ast);
-
-    CFGBlock* header = cfg_builder_create_loop(builder, ast);
-
-    const ASTNode* body_anchor = (ast->as.stmt_while.block.size > 0)
-        ? vector_at_back(ast->as.stmt_while.block)
-        : ast;
-
-    CFGBlock* body = cfg_builder_create_basic(builder, body_anchor);
-    CFGBlock* exit = cfg_builder_create_basic(builder, ast);
-
-    // entry to header
-    cfg_builder_connect_to(builder, header);
-
-    // header branches
-    cfg_block_add_edge(header, body); // true
-    cfg_block_add_edge(header, exit); // false
-
-    // loop anchors
-    cfg_builder_push_loop(builder, ast->scope, exit, header);
-
-    builder->curr = body;
-    builder->reachable = true;
-
-    cfg_builder_build_stmt_list(builder, &ast->as.stmt_while.block);
-
-    // backedge if body falls through
-    if (builder->reachable && builder->curr != NULL) {
-        cfg_block_add_edge(builder->curr, header);
+static void cfg_builder_maybe_warn_unreachable(CFGBuildCtx* ctx, const ASTNode* ast) {
+    assert(ctx != NULL && ast != NULL);
+    if (ctx->curr == NULL) {
+        REPORT_WARNING_LOC(ctx->rc, DIAG_SEMA_CFG, ast->loc, "unreachable statement detected");
     }
-
-    cfg_builder_pop_loop(builder, ast->scope);
-
-    // continue after loop
-    builder->curr = exit;
-    builder->reachable = true;
 }
 
-static inline void cfg_builder_build_do(CFGBuilder* builder, const ASTNode* ast) {
-    assert(builder != NULL);
-    assert(ast != NULL && ast->kind == AST_NODE_STMT_DO);
-
-    cfg_builder_warn_unreachable_if_needed(builder, ast);
-
-    const ASTNode* body_anchor = (ast->as.stmt_do.block.size > 0)
-        ? vector_at_back(ast->as.stmt_do.block)
-        : ast;
-
-    CFGBlock* body   = cfg_builder_create_basic(builder, body_anchor);
-    CFGBlock* header = cfg_builder_create_loop(builder, ast);
-    CFGBlock* exit   = cfg_builder_create_basic(builder, ast);
-
-    // entry to body
-    cfg_builder_connect_to(builder, body);
-
-    // loop anchors
-    cfg_builder_push_loop(builder, ast->scope, exit, header);
-
-    builder->curr = body;
-    builder->reachable = true;
-
-    cfg_builder_build_stmt_list(builder, &ast->as.stmt_do.block);
-
-    if (builder->reachable && builder->curr != NULL) {
-        cfg_block_add_edge(builder->curr, header);
-    }
-
-    // header branches
-    cfg_block_add_edge(header, body); // true
-    cfg_block_add_edge(header, exit); // false
-
-    cfg_builder_pop_loop(builder, ast->scope);
-
-    builder->curr = exit;
-    builder->reachable = true;
-}
-
-static inline void cfg_builder_prepare_stmt(CFGBuilder* builder, const ASTNode* ast) {
-    assert(builder != NULL);
+static inline void cfg_builder_build_stmt(CFGBuildCtx* ctx, const ASTNode* ast) {
+    assert(ctx != NULL && ast != NULL);
 
     switch (ast->kind) {
+    // just skip
+    case AST_NODE_STMT_EMPTY:
+        break;
+
     case AST_NODE_STMT_VAR_DECL:
     case AST_NODE_STMT_EXPR: {
-        CFGBlock* block = cfg_builder_ensure_basic(builder, ast);
+        cfg_builder_maybe_warn_unreachable(ctx, ast);
+        CFGBlock* block = cfg_builder_ensure_curr(ctx);
         cfg_block_add_stmt(block, ast);
     } break;
 
     case AST_NODE_STMT_RETURN: {
-        CFGBlock* block = cfg_builder_ensure_basic(builder, ast);
+        cfg_builder_maybe_warn_unreachable(ctx, ast);
+        CFGBlock* block = cfg_builder_ensure_curr(ctx);
         cfg_block_add_stmt(block, ast);
-        cfg_block_add_edge(block, builder->cfg->exit);
-        builder->reachable = false;
+        cfg_block_add_edge(block, CFG_EDGE_FALLTHROUGH, ctx->cfg->exit);
+        ctx->curr = NULL;
     } break;
 
     case AST_NODE_STMT_BREAK: {
-        CFGLoopAnchor* anchor = cfg_builder_find_loop(builder, ast->scope);
-        if (anchor == NULL) {
-            REPORT_ERROR_LOC(builder->rc, DIAG_SEMA_CFG, ast->loc, "'break' used outside of a loop.");
-            builder->reachable = false;
-            break;
-        }
-
-        CFGBlock* block = cfg_builder_ensure_basic(builder, ast);
+        cfg_builder_maybe_warn_unreachable(ctx, ast);
+        CFGBlock* block = cfg_builder_ensure_curr(ctx);
         cfg_block_add_stmt(block, ast);
-        cfg_block_add_edge(block, anchor->break_target);
-        builder->reachable = false;
+        LoopTargets* target = cfg_builder_get_last_loop_targets(ctx);
+        if (target == NULL) {
+            REPORT_DEBUG(ctx->rc, DIAG_SEMA_CFG, "usage of invalid 'break'.");
+        }
+        else {
+            cfg_block_add_edge(block, CFG_EDGE_FALLTHROUGH, target->break_target);
+        }
+        ctx->curr = NULL;
     } break;
 
     case AST_NODE_STMT_CONTINUE: {
-        CFGLoopAnchor* anchor = cfg_builder_find_loop(builder, ast->scope);
-        if (anchor == NULL) {
-            REPORT_ERROR_LOC(builder->rc, DIAG_SEMA_CFG, ast->loc, "'continue' used outside of a loop.");
-            builder->reachable = false;
-            break;
-        }
-
-        CFGBlock* block = cfg_builder_ensure_basic(builder, ast);
+        cfg_builder_maybe_warn_unreachable(ctx, ast);
+        CFGBlock* block = cfg_builder_ensure_curr(ctx);
         cfg_block_add_stmt(block, ast);
-        cfg_block_add_edge(block, anchor->continue_target);
-        builder->reachable = false;
+        LoopTargets* target = cfg_builder_get_last_loop_targets(ctx);
+        if (target == NULL) {
+            REPORT_DEBUG(ctx->rc, DIAG_SEMA_CFG, "usage of invalid 'continue'.");
+        }
+        else {
+            cfg_block_add_edge(block, CFG_EDGE_FALLTHROUGH, target->continue_target);
+        }
+        ctx->curr = NULL;
     } break;
 
     case AST_NODE_STMT_BLOCK: {
-        cfg_builder_build_stmt_list(builder, &ast->as.stmt_block.block);
+        cfg_builder_build_stmt_list(ctx, &ast->as.stmt_block.block);
     } break;
 
     case AST_NODE_STMT_CONDITION: {
-        cfg_builder_build_condition(builder, ast);
+        cfg_builder_build_condition(ctx, ast);
     } break;
 
     case AST_NODE_STMT_WHILE: {
-        cfg_builder_build_while(builder, ast);
-    } break;
+        // layout:  curr -> cond; cond(T) -> body -> cond ; cond(F) -> after
+        CFGBlock* cond = cfg_builder_create_block(ctx, CFG_BLOCK_LOOP_HEADER);
+        cfg_block_add_edge(cfg_builder_ensure_curr(ctx), CFG_EDGE_FALLTHROUGH, cond);
+        cfg_block_add_stmt(cond, ast->as.stmt_while.expr);
+
+        CFGBlock* body = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
+        CFGBlock* after = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
+
+        cfg_block_add_edge(cond, CFG_EDGE_TRUE, body);
+        cfg_block_add_edge(cond, CFG_EDGE_FALSE, after);
+
+        // push loop targets
+        cfg_builder_push_loop_targets(ctx, after, cond);
+
+        ctx->curr = body;
+        cfg_builder_build_stmt_list(ctx, &ast->as.stmt_while.block);
+        if (ctx->curr != NULL) {
+            cfg_block_add_edge(ctx->curr, CFG_EDGE_FALLTHROUGH, cond);
+        }
+
+        // pop loop targets
+        cfg_builder_pop_loop_targets(ctx);
+
+        ctx->curr = after;
+        break;
+    }
 
     case AST_NODE_STMT_DO: {
-        cfg_builder_build_do(builder, ast);
-    } break;
+        // layout: curr -> body -> cond; cond(T) -> body ; cond(F) -> after
+        CFGBlock* body = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
+        CFGBlock* cond = cfg_builder_create_block(ctx, CFG_BLOCK_LOOP_HEADER);
+        CFGBlock* after = cfg_builder_create_block(ctx, CFG_BLOCK_NORMAL);
 
-    default: {
+        cfg_block_add_edge(cfg_builder_ensure_curr(ctx), CFG_EDGE_FALLTHROUGH, body);
+
+        // continue should go to cond (post-test)
+        cfg_builder_push_loop_targets(ctx, after, cond);
+
+        CFGBlock* saved_curr = ctx->curr;
+        ctx->curr = body;
+        cfg_builder_build_stmt_list(ctx, &ast->as.stmt_do.block);
+        if (ctx->curr != NULL) {
+            cfg_block_add_edge(ctx->curr, CFG_EDGE_FALLTHROUGH, cond);
+        }
+        ctx->curr = saved_curr;
+
+        cfg_block_add_stmt(cond, ast->as.stmt_do.expr);
+        cfg_block_add_edge(cond, CFG_EDGE_TRUE, body);
+        cfg_block_add_edge(cond, CFG_EDGE_FALSE, after);
+
+        // pop loop targets
+        cfg_builder_pop_loop_targets(ctx);
+
+        ctx->curr = after;
+        break;
+    }
+
+    default:
         unreachable();
         break;
     }
-    }
 }
 
-static inline void cfg_builder_build_stmt_list(CFGBuilder* builder, const Vector* list) {
-    assert(builder != NULL && list != NULL);
+static void cfg_builder_build_stmt_list(CFGBuildCtx* ctx, const Vector* list) {
+    assert(ctx != NULL && list != NULL);
 
     for (u32 i = 0; i < list->size; ++i) {
-        ASTNode* ast = vector_at(*list, i);
-
-        if (!builder->reachable) {
-            cfg_builder_warn_unreachable_if_needed(builder, ast);
-        }
-
-        cfg_builder_prepare_stmt(builder, ast);
+        const ASTNode* s = vector_at(*list, i);
+        cfg_builder_build_stmt(ctx, s);
     }
 }
 
-CFGFunction* cfg_build_function(const struct ASTNode* ast, struct ReportCollector* rc) {
-    assert(rc != NULL && ast != NULL && ast->kind == AST_NODE_FUN_DECL);
+CFGFunction* cfg_function_build(const ASTNode* ast, ReportCollector* rc) {
+    assert(ast != NULL && rc != NULL);
 
     CFGFunction* cfg = malloc(sizeof(CFGFunction));
     assert(cfg != NULL);
 
-    cfg->ast = ast;
+    cfg->fun_decl = ast;
+    cfg->blocks   = (Vector){ 0 };
+    cfg->entry    = NULL;
+    cfg->exit     = NULL;
 
-    cfg->ast    = ast;
-    cfg->blocks = vector_create(
-        CFG_FUNCTION_DEFAULT_BLOCKS_COUNT,
-        VECTOR_SPECS(CFGBlock*, &cfg_block_destroy)
-    );
-    cfg->entry  = NULL;
-    cfg->exit   = NULL;
+    CFGBuildCtx ctx = {
+        .cfg  = cfg,
+        .rc   = rc,
+        .curr = NULL,
+        .loop_targets = (Vector) { 0 },
+    };
 
-    CFGBuilder builder = cfg_builder_create(cfg, rc);
+    //
+    cfg->entry = cfg_builder_create_block(&ctx, CFG_BLOCK_ENTRY);
+    cfg->exit  = cfg_builder_create_block(&ctx, CFG_BLOCK_EXIT);
 
-    cfg->entry = cfg_builder_create_basic(&builder, ast);
-    cfg->exit  = cfg_builder_create_basic(&builder, ast);
+    CFGBlock* start = cfg_builder_create_block(&ctx, CFG_BLOCK_NORMAL);
+    cfg_block_add_edge(cfg->entry, CFG_EDGE_FALLTHROUGH, start);
+    ctx.curr = start;
 
-    builder.curr = cfg->entry;
-    builder.reachable = true;
+    // function body
+    cfg_builder_build_stmt_list(&ctx, &ast->as.fun_decl.block);
 
-    const Vector* body = &ast->as.fun_decl.block;
-    cfg_builder_build_stmt_list(&builder, body);
-
-    if (builder.reachable && builder.curr != NULL) {
-        cfg_block_add_edge(builder.curr, cfg->exit);
+    // if function end is reachable, fallthrough to exit
+    if (ctx.curr != NULL && ctx.curr->succ.size == 0) {
+        cfg_block_add_edge(ctx.curr, CFG_EDGE_FALLTHROUGH, cfg->exit);
     }
 
-    cfg_builder_destroy(&builder);
+    vector_destroy(&ctx.loop_targets);
 
     return cfg;
 }

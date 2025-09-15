@@ -70,6 +70,8 @@ void compiler_emit_symbols(const Compiler* compiler);
 
 void compiler_emit_types(const Compiler* compiler);
 
+void compiler_emit_cfg_dot(const Compiler* compiler);
+
 //
 
 bool compiler_parse_source_files(Compiler* compiler);

@@ -10,6 +10,7 @@
 #include "vane/dump/ast_dump.h"
 #include "vane/dump/scope_dump.h"
 #include "vane/dump/types_dump.h"
+#include "vane/dump/cfg_dump.h"
 
 #include "vane/sema/scope.h"
 
@@ -158,6 +159,9 @@ static inline void compiler_emit_requested(const Compiler* compiler) {
     }
     if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_TYPES)) {
         compiler_emit_types(compiler);
+    }
+    if (IS_FLAG_SET(compiler->build_options->emit_mask, EMIT_FLAG_CFG_DOT)) {
+        compiler_emit_cfg_dot(compiler);
     }
 }
 
@@ -642,7 +646,7 @@ void compiler_emit_ast_text(const Compiler* compiler) {
     }
 
     while (hashmap_it_next(&package_it, NULL, &package)) {
-        if (package == NULL) {
+        if (package == NULL || package->is_core) {
             continue;
         }
 
@@ -653,6 +657,9 @@ void compiler_emit_ast_text(const Compiler* compiler) {
         // prepare per-package emit dir
         String package_out = STRING_EMPTY;
         const bool to_files = compiler_wants_files(compiler) && compiler_get_package_emit_dir(compiler, package, &package_out);
+
+        //
+        assert(string_view_contains_sv(string_get_view(package_out), STR_LIT("..")) && "TODO: handle path wich not in current project");
 
         for (u32 i = 0; i < package->source_files.size; ++i) {
             const SourceFile* source_file = vector_at(package->source_files, i);
@@ -700,7 +707,7 @@ void compiler_emit_ast_dot(const Compiler* compiler) {
     }
 
     while (hashmap_it_next(&package_it, NULL, &package)) {
-        if (package == NULL) {
+        if (package == NULL || package->is_core) {
             continue;
         }
 
@@ -711,6 +718,8 @@ void compiler_emit_ast_dot(const Compiler* compiler) {
         // prepare per-package emit dir
         String package_out = STRING_EMPTY;
         const bool to_files = compiler_wants_files(compiler) && compiler_get_package_emit_dir(compiler, package, &package_out);
+
+        assert(string_view_contains_sv(string_get_view(package_out), STR_LIT("..")) && "TODO: handle path wich not in current project");
 
         for (u32 i = 0; i < package->source_files.size; ++i) {
             const SourceFile* source_file = vector_at(package->source_files, i);
@@ -782,17 +791,90 @@ void compiler_emit_types(const Compiler* compiler) {
     assert(compiler != NULL);
 
     HashmapIterator it = hashmap_get_it(&compiler->packages);
-    Package* pkg = NULL;
+    Package* package = NULL;
 
-    while (hashmap_it_next(&it, NULL, &pkg)) {
-        if (pkg == NULL || pkg->scope == NULL) {
+    while (hashmap_it_next(&it, NULL, &package)) {
+        if (package == NULL || package->scope == NULL) {
             continue;
         }
 
-        if (pkg->is_core) {
+        if (package->is_core) {
             continue;
         }
-        compiler_emit_package_types(pkg);
+        compiler_emit_package_types(package);
+    }
+}
+
+void compiler_emit_cfg_dot(const Compiler* compiler) {
+    assert(compiler != NULL);
+
+    HashmapIterator package_it = hashmap_get_it(&compiler->packages);
+    Package* package = NULL;
+
+    const bool to_console = compiler_wants_console(compiler);
+    FileWriter cw = { 0 };
+    if (to_console) cw = file_writer_get_stdout();
+
+    while (hashmap_it_next(&package_it, NULL, &package)) {
+        if (package == NULL || package->is_core) {
+            continue;
+        }
+
+        if (to_console) {
+            file_writer_write_format(&cw, "package: " SV_FMT "\n", SV_ARG(package->path));
+        }
+
+        String pkg_out = STRING_EMPTY;
+        const bool to_files = compiler_wants_files(compiler) && compiler_get_package_emit_dir(compiler, package, &pkg_out);
+
+        for (u32 i = 0; i < package->source_files.size; ++i) {
+            const SourceFile* source_file = vector_at(package->source_files, i);
+
+            HashmapIterator it = hashmap_get_it(&source_file->cfg_by_fun);
+            ASTNode* fun_node = NULL;
+            CFGFunction* fun_cfg = NULL;
+
+            while (hashmap_it_next(&it, &fun_node, &fun_cfg)) {
+                // Console: show file + function name
+                if (to_console) {
+                    StringView fun_name = string_get_view(fun_node->as.fun_decl.sign->as.fun_sign.id->as.id.value);
+                    file_writer_write_format(&cw, "file: " SV_FMT "  fn: " SV_FMT "\n", SV_ARG(source_file->path), SV_ARG(fun_name));
+                    dump_cfg_function_dot(&cw, fun_cfg);
+                    file_writer_write_eol(&cw);
+                }
+
+                // Files: "<emit>/<pkg-rel>/<stem>.<fn>.cfg.dot"
+                if (to_files) {
+                    FileWriter fw = (FileWriter){ 0 };
+                    StringView stem = path_get_stem(source_file->path);
+                    StringView fun_name = string_get_view(fun_node->as.fun_decl.sign->as.fun_sign.id->as.id.value);
+
+                    // build filename: "<stem>.<fun>.cfg.dot"
+                    StringBuilder sb = string_builder_create(stem.len + 1 + fun_name.len + 8);
+                    string_builder_append_sv(&sb, stem);
+                    string_builder_append_c(&sb, '.');
+                    string_builder_append_sv(&sb, fun_name);
+                    StringView base = string_builder_get_view(sb);
+
+                    String out_fp = compiler_build_package_emit_filepath(string_get_view(pkg_out), base, STR_LIT(".cfg.dot"));
+
+                    if (compiler_open_file_for_write(&fw, string_get_view(out_fp), true, (ReportCollector*)&compiler->rc)) {
+                        dump_cfg_function_dot(&fw, fun_cfg);
+                        file_writer_close(&fw);
+                    }
+
+                    string_destroy(&out_fp);
+                    string_builder_destroy(&sb);
+                }
+            }
+        }
+
+        string_destroy(&pkg_out);
+
+        if (to_console) {
+            file_writer_write_eol(&cw);
+            file_writer_flush(&cw);
+        }
     }
 }
 

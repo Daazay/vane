@@ -176,7 +176,7 @@ static inline bool set_dump_flag(EmitFlags* mask, StringView token) {
         SET_FLAG(*mask,
             EMIT_FLAG_AST_TEXT | EMIT_FLAG_AST_DOT |
             EMIT_FLAG_SYMBOLS  | EMIT_FLAG_TYPES   |
-            EMIT_FLAG_CFG_TEXT | EMIT_FLAG_CFG_DOT
+            EMIT_FLAG_CFG_DOT
         );
         return true;
     }
@@ -196,16 +196,12 @@ static inline bool set_dump_flag(EmitFlags* mask, StringView token) {
         SET_FLAG(*mask, EMIT_FLAG_TYPES);
         return true;
     }
-    else if (string_view_eq_sv(token, STR_LIT("cfg")) || string_view_eq_sv(token, STR_LIT("cfg-text"))) {
-        SET_FLAG(*mask, EMIT_FLAG_TYPES);
-        return true;
-    }
-    else if (string_view_eq_sv(token, STR_LIT("cfg-dit"))) {
-        SET_FLAG(*mask, EMIT_FLAG_TYPES);
+    else if (string_view_eq_sv(token, STR_LIT("cfg-dot"))) {
+        SET_FLAG(*mask, EMIT_FLAG_CFG_DOT);
         return true;
     }
 
-    eprintln("unknown dump item '"SV_FMT"' (valid: ast, ast-dot, symbols, types, cfg, cfg-dot, all)", SV_ARG(token));
+    eprintln("unknown dump item '"SV_FMT"' (valid: ast, ast-dot, symbols, types, cfg-dot, all)", SV_ARG(token));
     return false;
 }
 
